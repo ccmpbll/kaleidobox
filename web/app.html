@@ -520,6 +520,13 @@
           fetch('/api/gallery/show/' + encodeURIComponent(name), {method: 'POST'})
             .then(refreshCanvasPreview)
             .catch(function () {});
+          // Pre-fills the save name with the one just loaded - draw on
+          // top and hit "Save current" and it overwrites this same
+          // entry (gallery_save() already overwrites-by-name on the
+          // device, nothing new needed there), since the name field
+          // still holds it unless you change it first. Change the name
+          // instead to save as a new entry.
+          gallerySaveName.value = name;
         });
 
         galleryList.appendChild(row);
