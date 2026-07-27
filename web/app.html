@@ -201,14 +201,6 @@
     }
     lastCell = cell;
 
-    // Gallery auto-advance would otherwise swap the canvas out from
-    // under an in-progress stroke - pause it while actively drawing,
-    // same mechanism as the save-flow race (see pauseAutoAdvance's
-    // comment). 15s sliding window: resets on every paint, so it stays
-    // paused through natural pauses mid-drawing and only resumes once
-    // you've actually stopped for a bit.
-    pauseAutoAdvance(15000);
-
     var rgb = hexToRgb(colorInput.value);
     var batch = [];
     for (var i = 0; i < cells.length; i++) {
@@ -250,18 +242,27 @@
     // would blank out that real gallery entry. Clearing the canvas
     // clears the intent to overwrite anything.
     gallerySaveName.value = '';
-    // Nothing left to protect from auto-advance once the canvas is
-    // wiped - resume right away instead of waiting out the drawing
-    // pause window.
-    resumeAutoAdvanceIfPaused();
-    // Stop a running kaleidoscope first, and wait for it, before pushing
-    // the clear - otherwise kaleidoscope_stop()'s own "restore the
-    // original image" behavior can land after our clear and undo it.
+    resumeAutoAdvanceIfPaused(); // in case the save-name field left it paused
+
+    // Clear means stop everything and start fresh - kaleidoscope and
+    // gallery rotation would otherwise keep animating/cycling right
+    // over the blank canvas this is about to push. Both awaited before
+    // the actual clear, same reasoning as kaleidoscope alone used to
+    // have: kaleidoscope_stop() restores the pre-animation image, so
+    // letting that (or a rotation cycle) land after the clear would
+    // silently undo it.
     var stopKaleido = kaleidoRunning ? sendKaleidoSettings({enabled: false}) : Promise.resolve();
-    stopKaleido
+    var stopRotation = galleryAutoRunning ? (function () {
+      galleryAutoRunning = false;
+      return sendGalleryMode();
+    })() : Promise.resolve();
+
+    Promise.all([stopKaleido, stopRotation])
       .then(function () {
         kaleidoRunning = false;
         kaleidoToggle.textContent = 'Start';
+        setGalleryAutoButtonText();
+        updateGalleryPolling();
         return fetch('/api/canvas/submit', {method: 'POST', body: buffer});
       })
       .catch(function () {});
@@ -562,49 +563,39 @@
   // already be gone by the time you hit the button, saving whatever
   // replaced it instead (gallery_save() always saves "whatever's on
   // canvas right now", which is a moving target while cycling). Pause
-  // the device's own auto-advance the moment the name field gets focus
-  // (freezing the canvas so a slow save can't grab the wrong image) or
-  // the moment you start drawing (freezing the canvas so auto-advance
-  // can't swap it out from under an in-progress stroke - same
-  // underlying race, different trigger: reported as "rotation kicks in
-  // while I'm drawing and I lose my work"). resumeDelayMs differs by
-  // caller: drawing resets a short sliding window on every paint (so
-  // it resumes shortly after you actually stop, not on some fixed
-  // timer that could fire mid-stroke), the save-name field uses a long
-  // flat safety net (focused-then-abandoned-without-saving shouldn't
-  // leave it paused indefinitely, but there's no per-keystroke signal
-  // to slide against like there is for drawing).
-  var pausedForEdit = false;
+  // the device's own auto-advance the moment the name field gets
+  // focus, freezing the canvas, and resume once the save completes.
+  // Safety-net timeout in case the field is focused and abandoned
+  // without saving, so auto-advance can't get stuck off.
+  var pausedForSave = false;
   var pauseTimeoutId = null;
 
-  function pauseAutoAdvance(resumeDelayMs) {
-    if (!galleryAutoRunning) {
+  function pauseAutoAdvanceForSave() {
+    if (!galleryAutoRunning || pausedForSave) {
       return;
     }
-    if (!pausedForEdit) {
-      pausedForEdit = true;
-      fetch('/api/gallery/mode', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({auto_advance: false, interval_seconds: parseInt(galleryInterval.value, 10)}),
-      }).catch(function () {});
-    }
+    pausedForSave = true;
+    fetch('/api/gallery/mode', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({auto_advance: false, interval_seconds: parseInt(galleryInterval.value, 10)}),
+    }).catch(function () {});
     clearTimeout(pauseTimeoutId);
-    pauseTimeoutId = setTimeout(resumeAutoAdvanceIfPaused, resumeDelayMs);
+    pauseTimeoutId = setTimeout(resumeAutoAdvanceIfPaused, 60000);
   }
 
   function resumeAutoAdvanceIfPaused() {
     clearTimeout(pauseTimeoutId);
-    if (!pausedForEdit) {
+    if (!pausedForSave) {
       return;
     }
-    pausedForEdit = false;
+    pausedForSave = false;
     if (galleryAutoRunning) {
       sendGalleryMode().catch(function () {}); // button state was never touched - this just re-enables it device-side
     }
   }
 
-  gallerySaveName.addEventListener('focus', function () { pauseAutoAdvance(60000); });
+  gallerySaveName.addEventListener('focus', pauseAutoAdvanceForSave);
 
   gallerySaveBtn.addEventListener('click', function () {
     var name = gallerySaveName.value.trim();
