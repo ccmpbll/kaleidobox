@@ -338,6 +338,7 @@ static esp_err_t ws_draw_handler(httpd_req_t *req) {
     kaleidobox_canvas_set_pixel((uint8_t)x->valueint, (uint8_t)y->valueint,
                                (uint8_t)r->valueint, (uint8_t)g->valueint,
                                (uint8_t)b->valueint);
+    kaleidobox_canvas_flip(); // one edit per message - show it immediately
   }
   cJSON_Delete(json);
   return ESP_OK;
@@ -370,6 +371,7 @@ static esp_err_t canvas_submit_post_handler(httpd_req_t *req) {
       kaleidobox_canvas_set_pixel(x, y, buf[idx], buf[idx + 1], buf[idx + 2]);
     }
   }
+  kaleidobox_canvas_flip(); // one flip for the whole grid, not per-pixel
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_sendstr(req, "{\"ok\":true}");
