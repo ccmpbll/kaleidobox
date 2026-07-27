@@ -14,7 +14,7 @@ static const char *TAG = "image_decode";
 
 // Target cap for JPEG decode's long edge - matches the "keep a few
 // hundred px, don't need full native res" plan (see image_decode.h).
-#define JPEG_MAX_DIMENSION 512
+#define JPEG_DECODE_MAX_DIMENSION 512
 
 // Progressive JPEG only - see the check in decode_jpeg() for why baseline
 // doesn't need this. Binary-searched on real hardware: 4.7MP (4,687,500px)
@@ -72,6 +72,179 @@ static void kaleidobox_jpeg_error_exit(j_common_ptr cinfo) {
   longjmp(err->setjmp_buffer, 1);
 }
 
+// Phones store portrait photos as landscape pixel data plus an EXIF
+// Orientation tag telling viewers how to rotate on display - libjpeg
+// only decodes raw pixels, it doesn't know or care about EXIF, so
+// without this every portrait upload lands sideways. Walks the raw
+// APP1/EXIF marker libjpeg was told to keep (via jpeg_save_markers(),
+// called before jpeg_read_header() below) to find tag 0x0112
+// (Orientation) in IFD0. Every offset is bounds-checked against the
+// marker's actual data_length - this is untrusted data straight from
+// an uploaded file. Returns 1 (normal/no-op) if the marker's missing,
+// malformed, or the tag isn't present - same as a real photo with no
+// EXIF at all.
+static uint16_t exif_u16(const uint8_t *p, bool le) {
+  return le ? (uint16_t)(p[0] | (p[1] << 8)) : (uint16_t)((p[0] << 8) | p[1]);
+}
+
+static uint32_t exif_u32(const uint8_t *p, bool le) {
+  if (le) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
+           ((uint32_t)p[3] << 24);
+  }
+  return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+         ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
+static int read_exif_orientation(jpeg_saved_marker_ptr marker_list) {
+  for (jpeg_saved_marker_ptr m = marker_list; m; m = m->next) {
+    if (m->marker != JPEG_APP0 + 1 || m->data_length < 14) {
+      continue;
+    }
+    if (memcmp(m->data, "Exif\0\0", 6) != 0) {
+      continue;
+    }
+    const uint8_t *tiff = m->data + 6;
+    size_t tiff_len = m->data_length - 6;
+    if (tiff_len < 8) {
+      continue;
+    }
+
+    bool little_endian;
+    if (memcmp(tiff, "II", 2) == 0) {
+      little_endian = true;
+    } else if (memcmp(tiff, "MM", 2) == 0) {
+      little_endian = false;
+    } else {
+      continue;
+    }
+
+    uint32_t ifd0_offset = exif_u32(tiff + 4, little_endian);
+    if ((uint64_t)ifd0_offset + 2 > tiff_len) {
+      continue;
+    }
+    uint16_t entry_count = exif_u16(tiff + ifd0_offset, little_endian);
+    uint32_t entries_start = ifd0_offset + 2;
+    if ((uint64_t)entries_start + (uint64_t)entry_count * 12 > tiff_len) {
+      continue;
+    }
+
+    for (uint16_t i = 0; i < entry_count; i++) {
+      const uint8_t *entry = tiff + entries_start + (size_t)i * 12;
+      uint16_t tag = exif_u16(entry, little_endian);
+      if (tag != 0x0112) {
+        continue;
+      }
+      uint16_t type = exif_u16(entry + 2, little_endian);
+      if (type != 3) { // SHORT - the only type Orientation is ever encoded as
+        break;
+      }
+      int value = exif_u16(entry + 8, little_endian); // first 2 bytes of the value field
+      return (value >= 1 && value <= 8) ? value : 1;
+    }
+  }
+  return 1; // no EXIF, no orientation tag, or unparseable - treat as normal
+}
+
+// EXIF Orientation 2-8 as in-place-size rotate/flip transforms on an
+// RGB888 buffer. 1 (normal) needs no transform and isn't handled here.
+// Dimensions swap for 5/6/7/8 (rotate 90) - caller must swap width/height
+// alongside calling these.
+static void rot_flip_h(const uint8_t *src, int w, int h, uint8_t *dst) {
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      memcpy(&dst[(y * w + (w - 1 - x)) * 3], &src[(y * w + x) * 3], 3);
+    }
+  }
+}
+
+static void rot_flip_v(const uint8_t *src, int w, int h, uint8_t *dst) {
+  for (int y = 0; y < h; y++) {
+    memcpy(&dst[(size_t)(h - 1 - y) * w * 3], &src[(size_t)y * w * 3], (size_t)w * 3);
+  }
+}
+
+static void rot_180(const uint8_t *src, int w, int h, uint8_t *dst) {
+  size_t n = (size_t)w * h;
+  for (size_t i = 0; i < n; i++) {
+    memcpy(&dst[(n - 1 - i) * 3], &src[i * 3], 3);
+  }
+}
+
+// dst must be sized h x w (swapped) - src top-left ends up at dst top-right.
+static void rot_90cw(const uint8_t *src, int w, int h, uint8_t *dst) {
+  int dst_w = h;
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      int dx = h - 1 - y, dy = x;
+      memcpy(&dst[(size_t)(dy * dst_w + dx) * 3], &src[(size_t)(y * w + x) * 3], 3);
+    }
+  }
+}
+
+// dst must be sized h x w (swapped) - src top-left ends up at dst bottom-left.
+static void rot_90ccw(const uint8_t *src, int w, int h, uint8_t *dst) {
+  int dst_w = h;
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      int dx = y, dy = w - 1 - x;
+      memcpy(&dst[(size_t)(dy * dst_w + dx) * 3], &src[(size_t)(y * w + x) * 3], 3);
+    }
+  }
+}
+
+// Applies the correction for the given EXIF orientation value to *buf
+// (RGB888, *w x *h), replacing *buf with a freshly allocated corrected
+// buffer and updating *w/*h if dimensions swapped. No-op for
+// orientation 1 (normal) or anything out of the defined 1-8 range.
+static void apply_exif_orientation(uint8_t **buf, uint16_t *w, uint16_t *h,
+                                   int orientation) {
+  if (orientation <= 1 || orientation > 8) {
+    return;
+  }
+  int sw = *w, sh = *h;
+  bool swaps_dims = orientation >= 5; // 5,6,7,8 all rotate 90 either way
+  size_t out_size = (size_t)sw * sh * 3;
+  uint8_t *out = malloc(out_size);
+  if (!out) {
+    ESP_LOGW(TAG, "no memory to correct EXIF orientation %d - leaving image "
+                  "as-is",
+            orientation);
+    return;
+  }
+
+  switch (orientation) {
+  case 2: rot_flip_h(*buf, sw, sh, out); break;
+  case 3: rot_180(*buf, sw, sh, out); break;
+  case 4: rot_flip_v(*buf, sw, sh, out); break;
+  case 5: { // transpose: flip horizontal, then rotate 90 CW
+    uint8_t *tmp = malloc(out_size);
+    if (!tmp) { free(out); return; }
+    rot_flip_h(*buf, sw, sh, tmp);
+    rot_90cw(tmp, sw, sh, out);
+    free(tmp);
+    break;
+  }
+  case 6: rot_90cw(*buf, sw, sh, out); break;
+  case 7: { // transverse: flip horizontal, then rotate 90 CCW
+    uint8_t *tmp = malloc(out_size);
+    if (!tmp) { free(out); return; }
+    rot_flip_h(*buf, sw, sh, tmp);
+    rot_90ccw(tmp, sw, sh, out);
+    free(tmp);
+    break;
+  }
+  case 8: rot_90ccw(*buf, sw, sh, out); break;
+  }
+
+  free(*buf);
+  *buf = out;
+  if (swaps_dims) {
+    *w = (uint16_t)sh;
+    *h = (uint16_t)sw;
+  }
+}
+
 static esp_err_t decode_jpeg(const uint8_t *data, size_t len,
                              kaleidobox_image_t *out) {
   struct jpeg_decompress_struct cinfo = {0};
@@ -93,8 +266,15 @@ static esp_err_t decode_jpeg(const uint8_t *data, size_t len,
   }
 
   jpeg_create_decompress(&cinfo);
+  // Keep the raw APP1/EXIF marker around so we can read the Orientation
+  // tag below - must be called before jpeg_read_header(), which is where
+  // libjpeg actually scans and collects markers.
+  jpeg_save_markers(&cinfo, JPEG_APP0 + 1, 0xFFFF);
   jpeg_mem_src(&cinfo, data, len);
   jpeg_read_header(&cinfo, TRUE);
+  // marker_list is only valid until jpeg_destroy_decompress() frees it -
+  // read it now, use the plain int later.
+  int exif_orientation = read_exif_orientation(cinfo.marker_list);
 
   // Unlike baseline (decoded scanline-by-scanline, so scale_denom genuinely
   // bounds peak memory), progressive JPEG requires buffering every DCT
@@ -123,11 +303,11 @@ static esp_err_t decode_jpeg(const uint8_t *data, size_t len,
                             ? cinfo.image_width
                             : cinfo.image_height;
   cinfo.scale_num = 1;
-  if (native_max <= JPEG_MAX_DIMENSION) {
+  if (native_max <= JPEG_DECODE_MAX_DIMENSION) {
     cinfo.scale_denom = 1;
-  } else if (native_max <= JPEG_MAX_DIMENSION * 2) {
+  } else if (native_max <= JPEG_DECODE_MAX_DIMENSION * 2) {
     cinfo.scale_denom = 2;
-  } else if (native_max <= JPEG_MAX_DIMENSION * 4) {
+  } else if (native_max <= JPEG_DECODE_MAX_DIMENSION * 4) {
     cinfo.scale_denom = 4;
   } else {
     cinfo.scale_denom = 8;
@@ -151,15 +331,25 @@ static esp_err_t decode_jpeg(const uint8_t *data, size_t len,
   }
 
   jpeg_finish_decompress(&cinfo);
-  jpeg_destroy_decompress(&cinfo);
+
+  uint16_t out_w = (uint16_t)cinfo.output_width;
+  uint16_t out_h = (uint16_t)cinfo.output_height;
+  int progressive = cinfo.progressive_mode;
+  jpeg_destroy_decompress(&cinfo); // frees marker_list - already read above
+
+  // outbuf here is always at the small scaled-down output size (a few
+  // hundred px), regardless of source resolution or progressive/baseline -
+  // scale_denom already bounds it. Rotating a buffer this size is cheap,
+  // no need to worry about it colliding with the memory limits above.
+  apply_exif_orientation(&outbuf, &out_w, &out_h, exif_orientation);
 
   out->rgb888 = outbuf;
-  out->width = (uint16_t)cinfo.output_width;
-  out->height = (uint16_t)cinfo.output_height;
+  out->width = out_w;
+  out->height = out_h;
   ESP_LOGI(TAG, "decoded JPEG: %ux%u (native max edge %u, scale 1/%u, "
-                "progressive=%d)",
-          cinfo.output_width, cinfo.output_height, native_max,
-          (unsigned)cinfo.scale_denom, cinfo.progressive_mode);
+                "progressive=%d, exif_orientation=%d)",
+          out_w, out_h, native_max, (unsigned)cinfo.scale_denom, progressive,
+          exif_orientation);
   return ESP_OK;
 }
 
