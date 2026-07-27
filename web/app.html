@@ -28,14 +28,16 @@
   button:active{opacity:.85;}
   button.secondary{background:rgb(230,226,222);color:rgb(41,41,41);}
   button:disabled{opacity:.5;cursor:default;}
-  #uploadLabel{padding:8px 14px;border-radius:6px;background:rgb(230,226,222);
+  .uploadLabel{padding:8px 14px;border-radius:6px;background:rgb(230,226,222);
     color:rgb(41,41,41);font-size:.9rem;font-weight:600;cursor:pointer;}
-  #uploadLabel:active{opacity:.85;}
+  .uploadLabel:active{opacity:.85;}
   #status{margin:0;font-size:.8rem;color:rgb(130,120,110);white-space:nowrap;}
   #galleryList{display:flex;flex-direction:column;gap:6px;margin-top:10px;
     max-width:512px;}
   .galleryItem{display:flex;align-items:center;gap:10px;padding:6px 8px;
-    background:#fff;border:1px solid rgb(230,226,222);border-radius:6px;}
+    background:#fff;border:1px solid rgb(230,226,222);border-radius:6px;
+    cursor:pointer;}
+  .galleryItem:active{background:rgb(240,238,250);}
   .galleryItem canvas{width:40px;height:40px;flex-shrink:0;
     border-radius:4px;background:#000;image-rendering:pixelated;}
   .galleryItem .name{flex:1;min-width:0;font-size:.85rem;
@@ -60,7 +62,7 @@
   <label><input type="checkbox" id="instant" checked> Instant draw</label>
   <button type="button" class="secondary" id="clear">Clear</button>
   <button type="button" id="submit" hidden>Submit</button>
-  <label id="uploadLabel" for="upload"><span id="uploadLabelText">Upload picture</span></label>
+  <label id="uploadLabel" class="uploadLabel" for="upload"><span id="uploadLabelText">Upload picture</span></label>
   <input type="file" id="upload" accept="image/jpeg,image/png" style="display:none;">
 </div>
 <h2>Kaleidoscope</h2>
@@ -72,10 +74,12 @@
   <label><input type="checkbox" id="motionZoom"> Zoom</label>
 </div>
 <h2>Gallery</h2>
-<p class="sub">Save the current panel to the TF card, or cycle through saved images.</p>
+<p class="sub">Save the current panel to the TF card, upload a picture straight into the gallery, or cycle through saved images. Tap a saved image to show it.</p>
 <div class="controls">
   <input type="text" id="gallerySaveName" placeholder="Name to save as" maxlength="48">
   <button type="button" id="gallerySave">Save current</button>
+  <label id="galleryUploadLabel" class="uploadLabel" for="galleryUpload"><span id="galleryUploadLabelText">Upload to gallery</span></label>
+  <input type="file" id="galleryUpload" accept="image/jpeg,image/png" style="display:none;">
 </div>
 <div class="controls">
   <button type="button" class="secondary" id="galleryPrev">&larr; Prev</button>
@@ -375,6 +379,8 @@
   var galleryList = document.getElementById('galleryList');
   var gallerySaveName = document.getElementById('gallerySaveName');
   var gallerySaveBtn = document.getElementById('gallerySave');
+  var galleryUploadInput = document.getElementById('galleryUpload');
+  var galleryUploadLabelText = document.getElementById('galleryUploadLabelText');
   var galleryPrevBtn = document.getElementById('galleryPrev');
   var galleryNextBtn = document.getElementById('galleryNext');
   var galleryAuto = document.getElementById('galleryAuto');
@@ -428,12 +434,19 @@
         delBtn.className = 'delete';
         delBtn.title = 'Delete ' + name;
         delBtn.innerHTML = TRASH_ICON_SVG;
-        delBtn.addEventListener('click', function () {
+        delBtn.addEventListener('click', function (e) {
+          e.stopPropagation(); // don't also trigger the row's "show this image" click
           fetch('/api/gallery/' + encodeURIComponent(name), {method: 'DELETE'})
             .then(refreshGalleryList)
             .catch(function () {});
         });
         row.appendChild(delBtn);
+
+        row.addEventListener('click', function () {
+          fetch('/api/gallery/show/' + encodeURIComponent(name), {method: 'POST'})
+            .then(refreshCanvasPreview)
+            .catch(function () {});
+        });
 
         galleryList.appendChild(row);
 
@@ -500,6 +513,39 @@
       .finally(function () {
         gallerySaveBtn.disabled = false;
         resumeAutoAdvanceIfPaused();
+      });
+  });
+
+  // Separate from the "Upload picture" control above - this decodes
+  // straight into a named gallery entry (POST /api/gallery/upload/name)
+  // without ever touching the live canvas, unlike a regular upload.
+  galleryUploadInput.addEventListener('change', function () {
+    var file = galleryUploadInput.files[0];
+    if (!file) {
+      return;
+    }
+    var original = galleryUploadLabelText.textContent;
+    var name = gallerySaveName.value.trim();
+    if (!name) {
+      galleryUploadLabelText.textContent = 'Type a name first';
+      galleryUploadInput.value = '';
+      setTimeout(function () { galleryUploadLabelText.textContent = original; }, 1500);
+      return;
+    }
+    galleryUploadLabelText.textContent = 'Uploading…';
+    fetch('/api/gallery/upload/' + encodeURIComponent(name), {method: 'POST', body: file})
+      .then(function (r) {
+        galleryUploadLabelText.textContent = r.ok ? 'Uploaded!' : 'Failed - retry';
+        if (r.ok) {
+          gallerySaveName.value = '';
+          refreshGalleryList();
+        }
+      })
+      .catch(function () { galleryUploadLabelText.textContent = 'Failed - retry'; })
+      .finally(function () {
+        galleryUploadInput.value = '';
+        resumeAutoAdvanceIfPaused(); // in case focusing the name field paused it and this upload was the only follow-up action
+        setTimeout(function () { galleryUploadLabelText.textContent = original; }, 1500);
       });
   });
 

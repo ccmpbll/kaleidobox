@@ -27,11 +27,23 @@ esp_err_t kaleidobox_gallery_init(void);
 esp_err_t kaleidobox_gallery_save(const char *name);
 esp_err_t kaleidobox_gallery_delete(const char *name);
 
+// Same as save(), but saves a caller-supplied buffer instead of the
+// current canvas - used by the gallery-upload HTTP endpoint (decoded
+// straight to a saved entry, without touching what's live on the
+// panel). rgb888 must be exactly CANVAS_WIDTH*CANVAS_HEIGHT*3 bytes.
+esp_err_t kaleidobox_gallery_save_bytes(const char *name, const uint8_t *rgb888);
+
 // Writes up to max_names newline-joined entries into buf; returns count.
 size_t kaleidobox_gallery_list(char *buf, size_t buf_size, size_t max_names);
 
 esp_err_t kaleidobox_gallery_next(void);
 esp_err_t kaleidobox_gallery_prev(void);
+
+// Loads a specific saved entry by name into the canvas (restarting
+// kaleidoscope if running, same as next()/prev()) - used by the web
+// UI's "tap a gallery thumbnail to show it" interaction. Also moves
+// the next()/prev() cursor to this entry's position.
+esp_err_t kaleidobox_gallery_show(const char *name);
 
 // Reads a saved entry's raw RGB888 bytes (exactly
 // CANVAS_WIDTH*CANVAS_HEIGHT*3) into caller-provided buf, without

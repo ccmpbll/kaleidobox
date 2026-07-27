@@ -778,6 +778,104 @@ static esp_err_t gallery_prev_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
+static esp_err_t gallery_show_post_handler(httpd_req_t *req) {
+  static const char *prefix = "/api/gallery/show/";
+  size_t prefix_len = strlen(prefix);
+  if (strncmp(req->uri, prefix, prefix_len) != 0) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_sendstr(req, "{\"error\":\"missing name\"}");
+    return ESP_OK;
+  }
+  const char *name = req->uri + prefix_len;
+
+  esp_err_t err = kaleidobox_gallery_show(name);
+  if (err == ESP_ERR_INVALID_ARG) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_sendstr(req, "{\"error\":\"invalid name\"}");
+    return ESP_OK;
+  } else if (err != ESP_OK) {
+    httpd_resp_set_status(req, "404 Not Found");
+    httpd_resp_sendstr(req, "{\"error\":\"not found\"}");
+    return ESP_OK;
+  }
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_sendstr(req, "{\"ok\":true}");
+  return ESP_OK;
+}
+
+// Decodes+resizes straight to a named gallery entry, never touching
+// the live canvas - a separate path from POST /api/upload, which is
+// "replace what's showing now". Body/decode/resize handling mirrors
+// upload_post_handler() above; only the destination differs.
+static esp_err_t gallery_upload_post_handler(httpd_req_t *req) {
+  static const char *prefix = "/api/gallery/upload/";
+  size_t prefix_len = strlen(prefix);
+  if (strncmp(req->uri, prefix, prefix_len) != 0) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_sendstr(req, "{\"error\":\"missing name\"}");
+    return ESP_FAIL;
+  }
+  const char *name = req->uri + prefix_len;
+
+  if (req->content_len == 0 || req->content_len > MAX_UPLOAD_BYTES) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_sendstr(req, "{\"error\":\"missing or oversized body\"}");
+    return ESP_FAIL;
+  }
+
+  uint8_t *raw = malloc(req->content_len);
+  if (!raw) {
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  size_t received = 0;
+  while (received < req->content_len) {
+    int r = httpd_req_recv(req, (char *)raw + received, req->content_len - received);
+    if (r <= 0) {
+      free(raw);
+      httpd_resp_send_500(req);
+      return ESP_FAIL;
+    }
+    received += r;
+  }
+
+  kaleidobox_image_t img = {0};
+  esp_err_t err = kaleidobox_image_decode(raw, req->content_len, &img);
+  free(raw);
+  if (err != ESP_OK) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_sendstr(req, "{\"error\":\"could not decode image - must be JPEG "
+                            "or PNG, and small enough to decode on-device (see "
+                            "POST /api/upload's error text for exact limits)\"}");
+    return ESP_FAIL;
+  }
+
+  uint8_t *resized = malloc(CANVAS_WIDTH * CANVAS_HEIGHT * 3);
+  if (!resized) {
+    kaleidobox_image_free(&img);
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  kaleidobox_image_resize_to_canvas(&img, resized);
+  kaleidobox_image_free(&img);
+
+  esp_err_t save_err = kaleidobox_gallery_save_bytes(name, resized);
+  free(resized);
+
+  if (save_err == ESP_ERR_INVALID_ARG) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_sendstr(req, "{\"error\":\"missing or invalid name\"}");
+    return ESP_OK;
+  } else if (save_err != ESP_OK) {
+    httpd_resp_set_status(req, "501 Not Implemented");
+    httpd_resp_sendstr(req, "{\"error\":\"no TF card mounted\"}");
+    return ESP_OK;
+  }
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_sendstr(req, "{\"ok\":true}");
+  return ESP_OK;
+}
+
 esp_err_t kaleidobox_http_server_start(void) {
   if (server) {
     return ESP_OK; // already running
@@ -792,10 +890,10 @@ esp_err_t kaleidobox_http_server_start(void) {
   config.stack_size = 8192;
   // Default max_uri_handlers is 8 - we register more than that (root,
   // status, logs, wifi, ota, ws/draw, canvas get/submit, upload,
-  // kaleidoscope x2, gallery x8). Past the cap,
+  // kaleidoscope x2, gallery x10). Past the cap,
   // httpd_register_uri_handler silently drops the excess - printspy-cam
   // hit this exact bug once already (see its http_server.c comment).
-  config.max_uri_handlers = 19;
+  config.max_uri_handlers = 21;
   config.max_open_sockets = LOG_WORKER_COUNT + 6;
   config.lru_purge_enable = true;
   // Same reasoning as printspy-cam: without TCP keepalive, a stale
@@ -865,6 +963,12 @@ esp_err_t kaleidobox_http_server_start(void) {
   httpd_uri_t gallery_prev_uri = {.uri = "/api/gallery/prev",
                                   .method = HTTP_POST,
                                   .handler = gallery_prev_handler};
+  httpd_uri_t gallery_show_uri = {.uri = "/api/gallery/show/*",
+                                  .method = HTTP_POST,
+                                  .handler = gallery_show_post_handler};
+  httpd_uri_t gallery_upload_uri = {.uri = "/api/gallery/upload/*",
+                                    .method = HTTP_POST,
+                                    .handler = gallery_upload_post_handler};
 
   httpd_register_uri_handler(server, &root_uri);
   httpd_register_uri_handler(server, &status_uri);
@@ -885,6 +989,8 @@ esp_err_t kaleidobox_http_server_start(void) {
   httpd_register_uri_handler(server, &gallery_mode_uri);
   httpd_register_uri_handler(server, &gallery_next_uri);
   httpd_register_uri_handler(server, &gallery_prev_uri);
+  httpd_register_uri_handler(server, &gallery_show_uri);
+  httpd_register_uri_handler(server, &gallery_upload_uri);
 
   ESP_LOGI(TAG, "HTTP server started");
   return ESP_OK;

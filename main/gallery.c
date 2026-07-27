@@ -76,12 +76,12 @@ static esp_err_t load_file_into_canvas(const char *path) {
   return ESP_OK;
 }
 
-static esp_err_t save_canvas_to(const char *path) {
+static esp_err_t save_bytes_to(const char *path, const uint8_t *bytes) {
   FILE *f = fopen(path, "wb");
   if (!f) {
     return ESP_FAIL;
   }
-  size_t n = fwrite(kaleidobox_canvas_buffer(), 1, BUF_SIZE, f);
+  size_t n = fwrite(bytes, 1, BUF_SIZE, f);
   fclose(f);
   return n == BUF_SIZE ? ESP_OK : ESP_FAIL;
 }
@@ -136,7 +136,7 @@ static void gallery_bg_task(void *arg) {
     }
 
     if (kaleidobox_canvas_take_dirty()) {
-      save_canvas_to(STATE_PATH);
+      save_bytes_to(STATE_PATH, kaleidobox_canvas_buffer());
     }
 
     if (kaleidobox_nvs_get_gallery_auto_advance()) {
@@ -162,6 +162,10 @@ esp_err_t kaleidobox_gallery_init(void) {
 }
 
 esp_err_t kaleidobox_gallery_save(const char *name) {
+  return kaleidobox_gallery_save_bytes(name, kaleidobox_canvas_buffer());
+}
+
+esp_err_t kaleidobox_gallery_save_bytes(const char *name, const uint8_t *rgb888) {
   if (!name_is_valid(name)) {
     return ESP_ERR_INVALID_ARG;
   }
@@ -170,7 +174,7 @@ esp_err_t kaleidobox_gallery_save(const char *name) {
   }
   char path[sizeof(GALLERY_DIR) + 64];
   snprintf(path, sizeof(path), GALLERY_DIR "/%s.raw", name);
-  return save_canvas_to(path);
+  return save_bytes_to(path, rgb888);
 }
 
 esp_err_t kaleidobox_gallery_delete(const char *name) {
@@ -267,6 +271,46 @@ esp_err_t kaleidobox_gallery_prev(void) {
   }
   g_current_index = ((g_current_index - 1) % n + n) % n;
   return load_at_index(g_current_index);
+}
+
+esp_err_t kaleidobox_gallery_show(const char *name) {
+  if (!name_is_valid(name)) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  if (!kaleidobox_sdcard_is_mounted()) {
+    return ESP_ERR_NOT_SUPPORTED;
+  }
+  char target[64];
+  snprintf(target, sizeof(target), "%s.raw", name);
+
+  DIR *d = opendir(GALLERY_DIR);
+  if (!d) {
+    return ESP_ERR_NOT_FOUND;
+  }
+  struct dirent *ent;
+  int i = 0;
+  esp_err_t err = ESP_ERR_NOT_FOUND;
+  while ((ent = readdir(d)) != NULL) {
+    if (ent->d_type != DT_REG) {
+      continue;
+    }
+    if (strcmp(ent->d_name, target) == 0) {
+      char path[sizeof(GALLERY_DIR) + 256];
+      snprintf(path, sizeof(path), GALLERY_DIR "/%s", ent->d_name);
+      err = load_file_into_canvas(path);
+      // Keeps next()/prev() cycling from this entry's position instead
+      // of wherever the cursor happened to be before - picking one by
+      // name is still "I'm looking at this one now" for cycling
+      // purposes.
+      if (err == ESP_OK) {
+        g_current_index = i;
+      }
+      break;
+    }
+    i++;
+  }
+  closedir(d);
+  return err;
 }
 
 esp_err_t kaleidobox_gallery_restore_state(void) {
