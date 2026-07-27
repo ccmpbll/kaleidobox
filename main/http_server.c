@@ -18,12 +18,36 @@
 #include "settings.h"
 #include "version.h"
 #include "wifi.h"
+#include <ctype.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 static const char *TAG = "kaleidobox_http";
+
+// req->uri is never URL-decoded by esp_http_server - a gallery name
+// with a space or other reserved character (routine for real photo
+// filenames, and what the web UI's nameFromFilename() produces)
+// arrives here as literal percent-encoding (e.g. "my%20photo") unless
+// decoded first. Real bug, not hypothetical: caught when a name with a
+// space got saved to disk as literal "my%20photo.raw". Copies (not
+// decodes in place) since req->uri's backing array is declared const,
+// and the decoded string is never longer than the encoded one so dst
+// only needs to be at least as large as src.
+static void url_decode_uri_tail(const char *src, char *dst, size_t dst_size) {
+  size_t out = 0;
+  while (*src && out + 1 < dst_size) {
+    if (src[0] == '%' && isxdigit((unsigned char)src[1]) && isxdigit((unsigned char)src[2])) {
+      char hex[3] = {src[1], src[2], 0};
+      dst[out++] = (char)strtol(hex, NULL, 16);
+      src += 3;
+    } else {
+      dst[out++] = *src++;
+    }
+  }
+  dst[out] = '\0';
+}
 
 static httpd_handle_t server = NULL;
 
@@ -664,7 +688,8 @@ static esp_err_t gallery_delete_handler(httpd_req_t *req) {
   }
   // req->uri is just the path here (no query string on this route in
   // practice) - name runs to the end of the string.
-  const char *name = req->uri + prefix_len;
+  char name[64];
+  url_decode_uri_tail(req->uri + prefix_len, name, sizeof(name));
 
   esp_err_t err = kaleidobox_gallery_delete(name);
   if (err == ESP_ERR_INVALID_ARG) {
@@ -689,7 +714,8 @@ static esp_err_t gallery_image_get_handler(httpd_req_t *req) {
     httpd_resp_sendstr(req, "{\"error\":\"missing name\"}");
     return ESP_OK;
   }
-  const char *name = req->uri + prefix_len;
+  char name[64];
+  url_decode_uri_tail(req->uri + prefix_len, name, sizeof(name));
 
   // Heap, not stack - same 12288-byte-on-8192-byte-httpd-task-stack
   // class of bug already caught (and fixed) elsewhere in this file.
@@ -786,7 +812,8 @@ static esp_err_t gallery_show_post_handler(httpd_req_t *req) {
     httpd_resp_sendstr(req, "{\"error\":\"missing name\"}");
     return ESP_OK;
   }
-  const char *name = req->uri + prefix_len;
+  char name[64];
+  url_decode_uri_tail(req->uri + prefix_len, name, sizeof(name));
 
   esp_err_t err = kaleidobox_gallery_show(name);
   if (err == ESP_ERR_INVALID_ARG) {
@@ -815,7 +842,8 @@ static esp_err_t gallery_upload_post_handler(httpd_req_t *req) {
     httpd_resp_sendstr(req, "{\"error\":\"missing name\"}");
     return ESP_FAIL;
   }
-  const char *name = req->uri + prefix_len;
+  char name[64];
+  url_decode_uri_tail(req->uri + prefix_len, name, sizeof(name));
 
   if (req->content_len == 0 || req->content_len > MAX_UPLOAD_BYTES) {
     httpd_resp_set_status(req, "400 Bad Request");

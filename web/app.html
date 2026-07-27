@@ -516,6 +516,16 @@
       });
   });
 
+  // Defaults the gallery name to the picked file's own filename - the
+  // backend only rejects '/' and '.' in a name (see gallery.c's
+  // name_is_valid()), and real filenames often carry an extension
+  // (and occasionally extra dots), so strip the extension and swap any
+  // remaining '/' or '.' for '_' rather than reject those file names.
+  function nameFromFilename(filename) {
+    var withoutExt = filename.replace(/\.[^./]*$/, '');
+    return withoutExt.replace(/[/.]/g, '_').trim().slice(0, 48);
+  }
+
   // Separate from the "Upload picture" control above - this decodes
   // straight into a named gallery entry (POST /api/gallery/upload/name)
   // without ever touching the live canvas, unlike a regular upload.
@@ -525,11 +535,13 @@
       return;
     }
     var original = galleryUploadLabelText.textContent;
-    var name = gallerySaveName.value.trim();
+    // Typed name (if any) wins - only fall back to the filename when
+    // the field's actually empty, so deliberate naming still works.
+    var name = gallerySaveName.value.trim() || nameFromFilename(file.name);
     if (!name) {
-      galleryUploadLabelText.textContent = 'Type a name first';
+      galleryUploadLabelText.textContent = 'Could not name this file - rename it and retry';
       galleryUploadInput.value = '';
-      setTimeout(function () { galleryUploadLabelText.textContent = original; }, 1500);
+      setTimeout(function () { galleryUploadLabelText.textContent = original; }, 2000);
       return;
     }
     galleryUploadLabelText.textContent = 'Uploading…';
