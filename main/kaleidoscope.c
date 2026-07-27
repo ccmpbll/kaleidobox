@@ -42,32 +42,26 @@ static void precompute_pixel_tables(uint8_t fold_count) {
     for (int x = 0; x < CANVAS_WIDTH; x++) {
       float rx = x - cx, ry = y - cy;
       float radius = sqrtf(rx * rx + ry * ry);
-      float angle = atan2f(ry, rx); // -pi..pi
+      // Tiny fixed bias BEFORE any fold math - keeps every pixel off an
+      // exact wedge boundary, not just the diagonal ones. Negligible
+      // visually (worth well under a tenth of a pixel of arc at any
+      // radius on this panel). A first attempt at this fix only nudged
+      // the copy_index floor and left it there - didn't help at all on
+      // real hardware, because `a` below was still computed via an
+      // independent fmodf() call that could disagree with copy_index
+      // regardless of that nudge. Fixed properly this time: bias keeps
+      // pixels off exact boundaries in the first place, and `a` is
+      // derived directly from copy_index (see below) instead of a
+      // second, separately-rounded computation that could disagree
+      // with it.
+      float angle = atan2f(ry, rx) + 0.001f; // -pi..pi (approx)
 
       // Fold into [0, wedge) - which wedge copy we're in, then mirror
       // every other copy so adjacent wedges reflect instead of repeat
       // identically. That reflection is what makes it look like a
       // kaleidoscope instead of just a spinning pie-slice duplicate.
-      //
-      // Center (cx,cy) is a half-integer (31.5) for an even-width
-      // canvas, so no pixel ever sits exactly on a horizontal/vertical
-      // boundary - but the anti-diagonal (x+y=CANVAS_WIDTH-1) does land
-      // exactly on integer pixel centers, at angle exactly ±45°/135°.
-      // When wedge is a divisor of 45° (fold_count a multiple of 8),
-      // that entire line of pixels sits exactly ON a wedge boundary,
-      // and independent per-pixel float noise in angle/wedge can push
-      // floorf() to a different integer for neighboring pixels that
-      // are mathematically supposed to agree - flipping mirror parity
-      // inconsistently along that one line. Confirmed on real hardware
-      // (a static-looking diagonal seam, only at fold counts that are
-      // multiples of 8) before this fix, not theoretical. The epsilon
-      // nudge below consistently resolves boundary-exact values to the
-      // same side instead of leaving it to whichever way the noise fell.
-      float a = fmodf(angle, wedge);
-      if (a < 0) {
-        a += wedge;
-      }
-      long copy_index = (long)floorf(angle / wedge + 1e-4f);
+      long copy_index = (long)floorf(angle / wedge);
+      float a = angle - wedge * (float)copy_index; // in [0,wedge) by construction, always consistent with copy_index
       if (copy_index % 2 != 0) {
         a = wedge - a;
       }
