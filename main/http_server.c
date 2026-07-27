@@ -3,7 +3,9 @@
 #include "canvas.h"
 #include "cJSON.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_netif.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -15,6 +17,7 @@
 #include "kaleidoscope.h"
 #include "log.h"
 #include "ota.h"
+#include "sdcard.h"
 #include "settings.h"
 #include "version.h"
 #include "wifi.h"
@@ -152,6 +155,19 @@ static esp_err_t status_handler(httpd_req_t *req) {
 
   cJSON_AddBoolToObject(root, "kaleidoscope_running",
                         kaleidobox_kaleidoscope_is_running());
+
+  // Real monitoring value, not just a diagnostic throwaway - lets a
+  // slow leak (or fragmentation) get caught by watching this trend
+  // over time instead of only noticing once the device gets visibly
+  // sluggish or crashes.
+  cJSON_AddNumberToObject(root, "heap_free_bytes", esp_get_free_heap_size());
+  cJSON_AddNumberToObject(root, "heap_min_free_bytes", esp_get_minimum_free_heap_size());
+  // A flat free-byte total can still hide a badly fragmented heap
+  // (plenty of free bytes, but no single block big enough for the next
+  // 12KB canvas-sized allocation) - this is the number that actually
+  // answers that.
+  cJSON_AddNumberToObject(root, "heap_largest_free_block",
+                          heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
 
   char *json = cJSON_PrintUnformatted(root);
   httpd_resp_set_type(req, "application/json");
@@ -649,6 +665,17 @@ static esp_err_t gallery_get_handler(httpd_req_t *req) {
     }
   }
   cJSON_AddItemToObject(root, "images", arr);
+
+  // cJSON's numbers are doubles - fine here, a double represents
+  // integers exactly up to 2^53 (~9 petabytes), way past any TF card
+  // this device will ever see. Fields just omitted (not zeroed) when
+  // nothing's mounted, so the UI can tell "no card" from "empty card".
+  uint64_t total_bytes = 0, free_bytes = 0;
+  if (kaleidobox_sdcard_get_space(&total_bytes, &free_bytes) == ESP_OK) {
+    cJSON_AddNumberToObject(root, "sdcard_total_bytes", (double)total_bytes);
+    cJSON_AddNumberToObject(root, "sdcard_free_bytes", (double)free_bytes);
+  }
+
   char *json = cJSON_PrintUnformatted(root);
   httpd_resp_set_type(req, "application/json");
   esp_err_t res = httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);

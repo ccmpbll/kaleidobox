@@ -90,6 +90,7 @@
   <label>Every <input type="range" id="galleryInterval" min="5" max="300" value="30" style="width:100px;">
     <input type="number" id="galleryIntervalNum" min="5" max="300" value="30" style="width:56px;">s</label>
 </div>
+<p id="gallerySpace" class="sub"></p>
 <div id="galleryList"></div>
 <script>
 (function () {
@@ -410,8 +411,24 @@
     tctx.putImageData(imgData, 0, 0);
   }
 
+  function formatBytes(n) {
+    var units = ['B', 'KB', 'MB', 'GB'];
+    var i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return (i === 0 ? n : n.toFixed(1)) + units[i];
+  }
+
   function refreshGalleryList() {
     fetch('/api/gallery').then(function (r) { return r.json(); }).then(function (s) {
+      var gallerySpace = document.getElementById('gallerySpace');
+      if (typeof s.sdcard_total_bytes === 'number') {
+        var used = s.sdcard_total_bytes - s.sdcard_free_bytes;
+        gallerySpace.textContent = 'TF card: ' + formatBytes(used) + ' used, ' +
+          formatBytes(s.sdcard_free_bytes) + ' free of ' + formatBytes(s.sdcard_total_bytes);
+      } else {
+        gallerySpace.textContent = 'No TF card detected.';
+      }
+
       var images = s.images || [];
       galleryList.innerHTML = '';
       if (images.length === 0) {

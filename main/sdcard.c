@@ -54,3 +54,10 @@ esp_err_t kaleidobox_sdcard_init(void) {
 }
 
 bool kaleidobox_sdcard_is_mounted(void) { return g_mounted; }
+
+esp_err_t kaleidobox_sdcard_get_space(uint64_t *total_bytes, uint64_t *free_bytes) {
+  if (!g_mounted) {
+    return ESP_ERR_NOT_SUPPORTED;
+  }
+  return esp_vfs_fat_info(MOUNT_POINT, total_bytes, free_bytes);
+}

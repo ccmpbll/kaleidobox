@@ -2,6 +2,7 @@
 
 #include "esp_err.h"
 #include <stdbool.h>
+#include <stdint.h>
 
 // Mounts the TF card as FAT via 1-bit SDMMC (esp_vfs_fat_sdmmc_mount) -
 // confirmed against Waveshare's official BSP (D1/D2/D3 are unconnected on
@@ -14,3 +15,9 @@
 
 esp_err_t kaleidobox_sdcard_init(void);
 bool kaleidobox_sdcard_is_mounted(void);
+
+// Total/free space on the mounted FAT filesystem (not the raw card
+// capacity - FAT overhead/reserved clusters mean these are always a
+// bit less than the card's advertised size). ESP_ERR_NOT_SUPPORTED if
+// nothing's mounted.
+esp_err_t kaleidobox_sdcard_get_space(uint64_t *total_bytes, uint64_t *free_bytes);
