@@ -28,3 +28,12 @@ esp_err_t kaleidobox_kaleidoscope_init(void);
 esp_err_t kaleidobox_kaleidoscope_start(const kaleidobox_image_t *source);
 void kaleidobox_kaleidoscope_stop(void);
 bool kaleidobox_kaleidoscope_is_running(void);
+
+// Swaps the live source image without stopping/restarting the
+// animation - no task teardown/recreate, no precomputed pixel-table
+// recalculation (those only depend on fold count, not source content),
+// just a locked pointer swap. Returns ESP_ERR_INVALID_STATE if nothing
+// is currently running (use start() instead). Meant for frequent calls
+// from a live-editing path (e.g. instant-draw) where a full restart's
+// black-frame flicker would be disruptive.
+esp_err_t kaleidobox_kaleidoscope_update_source(const kaleidobox_image_t *source);

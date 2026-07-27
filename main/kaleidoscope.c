@@ -29,6 +29,12 @@ static volatile bool g_should_run = false;
 
 static kaleidobox_image_t g_source = {0}; // owns a copy - caller's buffer
                                           // may not outlive this call
+// Guards g_source.{rgb888,width,height} against the animation task
+// (kaleidoscope_task/render_frame) reading it while
+// kaleidobox_kaleidoscope_update_source() swaps it out from another
+// task (e.g. an HTTP handler, on a live canvas edit) - without this, a
+// freed old buffer could still be mid-read by the animation task.
+static SemaphoreHandle_t g_source_mutex = NULL;
 
 // Per destination pixel, precomputed once per start() (not per frame):
 // the wedge-folded angle and radius. Destination pixel positions never
@@ -79,6 +85,12 @@ static void precompute_pixel_tables(uint8_t fold_count) {
 }
 
 static void render_frame(uint8_t *dst, float rotation_offset, float zoom_scale) {
+  // Held for the whole frame, not just a pointer snapshot at the top -
+  // update_source() frees the old buffer right after swapping it in,
+  // so a snapshot-then-release here could let that free() race a read
+  // still in progress below.
+  xSemaphoreTake(g_source_mutex, portMAX_DELAY);
+
   float src_cx = (g_source.width - 1) / 2.0f;
   float src_cy = (g_source.height - 1) / 2.0f;
 
@@ -102,6 +114,8 @@ static void render_frame(uint8_t *dst, float rotation_offset, float zoom_scale) 
     dst[dst_idx + 1] = g_source.rgb888[src_idx + 1];
     dst[dst_idx + 2] = g_source.rgb888[src_idx + 2];
   }
+
+  xSemaphoreGive(g_source_mutex);
 }
 
 static void kaleidoscope_task(void *arg) {
@@ -142,6 +156,12 @@ esp_err_t kaleidobox_kaleidoscope_init(void) {
   }
   xSemaphoreGive(g_task_exited); // available - stop() on a never-started
                                  // animation shouldn't block
+
+  g_source_mutex = xSemaphoreCreateMutex();
+  if (!g_source_mutex) {
+    return ESP_ERR_NO_MEM;
+  }
+
   ESP_LOGI(TAG, "kaleidoscope_init");
   return ESP_OK;
 }
@@ -187,6 +207,35 @@ esp_err_t kaleidobox_kaleidoscope_start(const kaleidobox_image_t *source) {
 
   ESP_LOGI(TAG, "kaleidoscope started (%ux%u source, fold=%u)", source->width,
           source->height, kaleidobox_nvs_get_fold_count());
+  return ESP_OK;
+}
+
+esp_err_t kaleidobox_kaleidoscope_update_source(const kaleidobox_image_t *source) {
+  if (!source || !source->rgb888 || source->width == 0 || source->height == 0) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  if (!g_should_run) {
+    return ESP_ERR_INVALID_STATE; // nothing running to update
+  }
+
+  // Same deep-copy reasoning as start() - decode/allocate before
+  // taking the lock, so the animation task is only blocked for the
+  // actual pointer swap below, not for this call's malloc/memcpy.
+  size_t size = (size_t)source->width * source->height * 3;
+  uint8_t *copy = malloc(size);
+  if (!copy) {
+    return ESP_ERR_NO_MEM;
+  }
+  memcpy(copy, source->rgb888, size);
+
+  xSemaphoreTake(g_source_mutex, portMAX_DELAY);
+  uint8_t *old = g_source.rgb888;
+  g_source.rgb888 = copy;
+  g_source.width = source->width;
+  g_source.height = source->height;
+  xSemaphoreGive(g_source_mutex);
+  free(old);
+
   return ESP_OK;
 }
 

@@ -1,6 +1,7 @@
 #include "canvas.h"
 
 #include "esp_log.h"
+#include "kaleidoscope.h"
 #include "matrix.h"
 #include <string.h>
 
@@ -36,6 +37,21 @@ void kaleidobox_canvas_set_all(const uint8_t *rgb888) {
   memcpy(g_buffer, rgb888, sizeof(g_buffer));
   g_dirty = true;
   kaleidobox_matrix_draw_rgb888(g_buffer, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+  // Kaleidoscope samples from its own private copy of the source image
+  // (see kaleidoscope.c), so a canvas change here would otherwise get
+  // overwritten by kaleidoscope's very next frame instead of actually
+  // taking effect - covers gallery show/next/prev, draw-then-submit,
+  // upload, and clear, since they all funnel through here. No-op if
+  // kaleidoscope isn't running.
+  if (kaleidobox_kaleidoscope_is_running()) {
+    kaleidobox_image_t source = {
+        .rgb888 = g_buffer,
+        .width = CANVAS_WIDTH,
+        .height = CANVAS_HEIGHT,
+    };
+    kaleidobox_kaleidoscope_update_source(&source);
+  }
 }
 
 bool kaleidobox_canvas_take_dirty(void) {

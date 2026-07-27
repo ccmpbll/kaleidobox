@@ -385,6 +385,19 @@ static esp_err_t ws_draw_handler(httpd_req_t *req) {
     // No kaleidobox_canvas_flip() here - single-buffer mode (see
     // matrix.cpp) means set_pixel() is already live, and flip() would
     // just be a no-op warning log per batch.
+
+    // set_pixel() (unlike set_all()) doesn't go through canvas.c's own
+    // kaleidoscope-update hook, since triggering that per-pixel inside
+    // a tight batch loop would be wasteful - once per batch here
+    // instead. No-op if kaleidoscope isn't running.
+    if (kaleidobox_kaleidoscope_is_running()) {
+      kaleidobox_image_t source = {
+          .rgb888 = (uint8_t *)kaleidobox_canvas_buffer(),
+          .width = CANVAS_WIDTH,
+          .height = CANVAS_HEIGHT,
+      };
+      kaleidobox_kaleidoscope_update_source(&source);
+    }
   }
   cJSON_Delete(json);
   return ESP_OK;

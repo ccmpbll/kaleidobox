@@ -4,7 +4,6 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "kaleidoscope.h"
 #include "sdcard.h"
 #include "settings.h"
 #include <dirent.h>
@@ -55,24 +54,10 @@ static esp_err_t load_file_into_canvas(const char *path) {
     free(buf);
     return ESP_ERR_INVALID_SIZE;
   }
+  // kaleidobox_canvas_set_all() already updates a running kaleidoscope's
+  // source (see canvas.c) - no need to duplicate that here.
   kaleidobox_canvas_set_all(buf);
   free(buf);
-
-  // Kaleidoscope samples from its own private copy of the source image
-  // (see kaleidoscope.c) - it never notices a canvas change on its own,
-  // so without this a gallery cycle would just get overwritten by
-  // kaleidoscope's next frame instead of actually changing what's
-  // animating. Restarting is exactly what a live settings change
-  // already does (kaleidoscope_start() stops-then-restarts cleanly) -
-  // same trick, new trigger. No-op if kaleidoscope isn't running.
-  if (kaleidobox_kaleidoscope_is_running()) {
-    kaleidobox_image_t source = {
-        .rgb888 = (uint8_t *)kaleidobox_canvas_buffer(),
-        .width = CANVAS_WIDTH,
-        .height = CANVAS_HEIGHT,
-    };
-    kaleidobox_kaleidoscope_start(&source);
-  }
   return ESP_OK;
 }
 
