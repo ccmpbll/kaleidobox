@@ -6,13 +6,20 @@
 
 // Per-frame polar-fold kaleidoscope transform: for each output pixel,
 // compute angle+radius from center, fold the angle into the base wedge
-// (kaleidobox_nvs_get_fold_count() repeats), sample the source image via
-// a rotating (and, if kaleidobox_nvs_get_motion_zoom() is set,
-// zooming/panning) UV offset that advances every frame. Runs as a
-// FreeRTOS timer task pushing frames to matrix.h while active.
+// (kaleidobox_nvs_get_fold_count() repeats, mirroring alternate copies
+// for the classic kaleidoscope look rather than a plain repeated pie
+// slice), sample the source image via a rotating (and, if
+// kaleidobox_nvs_get_motion_zoom() is set, zooming/breathing) offset
+// that advances every frame. Runs as its own FreeRTOS task pushing
+// frames to matrix.h (bulk draw_pixels, not per-pixel set_pixel - see
+// matrix.h for why that matters) at ~25fps while active.
 //
-// STUB - not yet implemented. No FreeRTOS task is created yet; start/stop
-// are no-ops.
+// v1 samples from whatever's on the 64x64 canvas (current drawing or
+// last upload), not a separate higher-resolution source image - the
+// original plan was to keep a bigger decoded image around specifically
+// for this, but that adds real source-image-lifetime complexity for a
+// quality improvement nobody's asked for yet. Revisit if the 64x64
+// source visibly limits quality once this is actually being used.
 
 esp_err_t kaleidobox_kaleidoscope_init(void);
 

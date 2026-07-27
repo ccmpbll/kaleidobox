@@ -22,3 +22,12 @@ CONFIG_HTTPD_WS_SUPPORT=y
 # Default (10) can starve requests under real use - same reasoning as
 # printspy-cam.
 CONFIG_LWIP_MAX_SOCKETS=16
+
+# kaleidobox_http_server_start() (httpd_start + registering all ~16 URI
+# handlers) runs inline on whatever task calls it - the WiFi IP_EVENT
+# handler, i.e. ESP-IDF's own system event task, not a task of ours.
+# That task's default stack (2304 bytes) was thin enough already; it
+# overflowed for real once the handler count grew - confirmed via a
+# real crash log ("stack overflow in task sys_evt"), not a guess.
+# Doubled for headroom rather than trimmed to the observed edge.
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096

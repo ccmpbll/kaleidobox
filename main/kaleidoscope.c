@@ -1,27 +1,186 @@
 #include "kaleidoscope.h"
 
+#include "canvas.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+#include "matrix.h"
+#include "settings.h"
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 
 static const char *TAG = "kaleidoscope";
-static bool g_running = false;
+
+#define FRAME_INTERVAL_MS 40 // ~25fps - see start-of-file note below on cost
+#define ROTATION_STEP 0.03f  // rad/frame - full revolution in ~8.4s at 25fps
+#define ZOOM_STEP 0.02f
+#define ZOOM_AMPLITUDE 0.25f // scale oscillates 0.75x..1.25x
+
+static TaskHandle_t g_task = NULL;
+static SemaphoreHandle_t g_task_exited = NULL;
+static volatile bool g_should_run = false;
+
+static kaleidobox_image_t g_source = {0}; // owns a copy - caller's buffer
+                                          // may not outlive this call
+
+// Per destination pixel, precomputed once per start() (not per frame):
+// the wedge-folded angle and radius. Destination pixel positions never
+// move, so recomputing atan2f/sqrtf/fmodf for all 4096 pixels every
+// single frame would be pure waste - only the animated rotation/zoom
+// offsets applied on top of these actually change frame to frame.
+static float g_pixel_angle[CANVAS_WIDTH * CANVAS_HEIGHT];
+static float g_pixel_radius[CANVAS_WIDTH * CANVAS_HEIGHT];
+
+static void precompute_pixel_tables(uint8_t fold_count) {
+  float cx = (CANVAS_WIDTH - 1) / 2.0f;
+  float cy = (CANVAS_HEIGHT - 1) / 2.0f;
+  float wedge = 2.0f * (float)M_PI / (float)fold_count;
+
+  for (int y = 0; y < CANVAS_HEIGHT; y++) {
+    for (int x = 0; x < CANVAS_WIDTH; x++) {
+      float rx = x - cx, ry = y - cy;
+      float radius = sqrtf(rx * rx + ry * ry);
+      float angle = atan2f(ry, rx); // -pi..pi
+
+      // Fold into [0, wedge) - which wedge copy we're in, then mirror
+      // every other copy so adjacent wedges reflect instead of repeat
+      // identically. That reflection is what makes it look like a
+      // kaleidoscope instead of just a spinning pie-slice duplicate.
+      float a = fmodf(angle, wedge);
+      if (a < 0) {
+        a += wedge;
+      }
+      long copy_index = lroundf(floorf(angle / wedge));
+      if (copy_index % 2 != 0) {
+        a = wedge - a;
+      }
+
+      int idx = y * CANVAS_WIDTH + x;
+      g_pixel_angle[idx] = a;
+      g_pixel_radius[idx] = radius;
+    }
+  }
+}
+
+static void render_frame(uint8_t *dst, float rotation_offset, float zoom_scale) {
+  float src_cx = (g_source.width - 1) / 2.0f;
+  float src_cy = (g_source.height - 1) / 2.0f;
+
+  for (int i = 0; i < CANVAS_WIDTH * CANVAS_HEIGHT; i++) {
+    float sample_angle = g_pixel_angle[i] + rotation_offset;
+    float sample_radius = g_pixel_radius[i] * zoom_scale;
+
+    float sx = src_cx + sample_radius * cosf(sample_angle);
+    float sy = src_cy + sample_radius * sinf(sample_angle);
+
+    int isx = (int)lroundf(sx);
+    int isy = (int)lroundf(sy);
+    if (isx < 0) isx = 0;
+    if (isx >= g_source.width) isx = g_source.width - 1;
+    if (isy < 0) isy = 0;
+    if (isy >= g_source.height) isy = g_source.height - 1;
+
+    size_t src_idx = ((size_t)isy * g_source.width + isx) * 3;
+    size_t dst_idx = (size_t)i * 3;
+    dst[dst_idx] = g_source.rgb888[src_idx];
+    dst[dst_idx + 1] = g_source.rgb888[src_idx + 1];
+    dst[dst_idx + 2] = g_source.rgb888[src_idx + 2];
+  }
+}
+
+static void kaleidoscope_task(void *arg) {
+  (void)arg;
+  uint8_t *frame = malloc(CANVAS_WIDTH * CANVAS_HEIGHT * 3);
+  if (!frame) {
+    ESP_LOGE(TAG, "no memory for frame buffer, aborting animation");
+    g_should_run = false;
+    xSemaphoreGive(g_task_exited);
+    vTaskDelete(NULL);
+    return;
+  }
+
+  bool motion_zoom = kaleidobox_nvs_get_motion_zoom();
+  float rotation_offset = 0.0f;
+  float zoom_phase = 0.0f;
+
+  while (g_should_run) {
+    float zoom_scale = motion_zoom ? (1.0f + ZOOM_AMPLITUDE * sinf(zoom_phase)) : 1.0f;
+    render_frame(frame, rotation_offset, zoom_scale);
+    kaleidobox_matrix_draw_rgb888(frame, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    rotation_offset += ROTATION_STEP;
+    zoom_phase += ZOOM_STEP;
+
+    vTaskDelay(pdMS_TO_TICKS(FRAME_INTERVAL_MS));
+  }
+
+  free(frame);
+  xSemaphoreGive(g_task_exited);
+  vTaskDelete(NULL);
+}
 
 esp_err_t kaleidobox_kaleidoscope_init(void) {
-  ESP_LOGI(TAG, "kaleidoscope_init (stub)");
+  g_task_exited = xSemaphoreCreateBinary();
+  if (!g_task_exited) {
+    return ESP_ERR_NO_MEM;
+  }
+  xSemaphoreGive(g_task_exited); // available - stop() on a never-started
+                                 // animation shouldn't block
+  ESP_LOGI(TAG, "kaleidoscope_init");
   return ESP_OK;
 }
 
 esp_err_t kaleidobox_kaleidoscope_start(const kaleidobox_image_t *source) {
-  (void)source;
-  // TODO: spin up a FreeRTOS timer task (~20-30fps) that, per frame,
-  // computes angle/radius from center for each of the 64x64 output
-  // pixels, folds into the configured wedge count, samples `source` via
-  // a rotating/zooming UV offset, and pushes the result through
-  // matrix.h. Not yet implemented - matrix driver isn't wired up either.
-  ESP_LOGW(TAG, "kaleidoscope_start not yet implemented");
-  g_running = true;
-  return ESP_ERR_NOT_SUPPORTED;
+  if (!source || !source->rgb888 || source->width == 0 || source->height == 0) {
+    return ESP_ERR_INVALID_ARG;
+  }
+
+  kaleidobox_kaleidoscope_stop(); // clean restart if already running
+
+  // Deep copy - the caller's buffer (e.g. a stack kaleidobox_image_t
+  // wrapping the canvas buffer) isn't guaranteed to outlive this call,
+  // and the animation task needs its own stable copy for its lifetime.
+  size_t size = (size_t)source->width * source->height * 3;
+  uint8_t *copy = malloc(size);
+  if (!copy) {
+    return ESP_ERR_NO_MEM;
+  }
+  memcpy(copy, source->rgb888, size);
+
+  if (g_source.rgb888) {
+    free(g_source.rgb888);
+  }
+  g_source.rgb888 = copy;
+  g_source.width = source->width;
+  g_source.height = source->height;
+
+  precompute_pixel_tables(kaleidobox_nvs_get_fold_count());
+
+  g_should_run = true;
+  xSemaphoreTake(g_task_exited, 0); // claim it - task will give it back on exit
+  BaseType_t ok = xTaskCreate(kaleidoscope_task, "kaleidoscope", 4096, NULL,
+                              tskIDLE_PRIORITY + 1, &g_task);
+  if (ok != pdPASS) {
+    g_should_run = false;
+    g_task = NULL;
+    xSemaphoreGive(g_task_exited);
+    return ESP_ERR_NO_MEM;
+  }
+
+  ESP_LOGI(TAG, "kaleidoscope started (%ux%u source, fold=%u)", source->width,
+          source->height, kaleidobox_nvs_get_fold_count());
+  return ESP_OK;
 }
 
-void kaleidobox_kaleidoscope_stop(void) { g_running = false; }
+void kaleidobox_kaleidoscope_stop(void) {
+  if (!g_task) {
+    return;
+  }
+  g_should_run = false;
+  xSemaphoreTake(g_task_exited, portMAX_DELAY); // wait for the task to actually exit
+  g_task = NULL;
+}
 
-bool kaleidobox_kaleidoscope_is_running(void) { return g_running; }
+bool kaleidobox_kaleidoscope_is_running(void) { return g_task != NULL; }

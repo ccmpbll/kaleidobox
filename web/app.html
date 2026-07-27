@@ -10,6 +10,7 @@
     color:rgb(41,41,41);font-family:-apple-system,BlinkMacSystemFont,
     'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}
   h1{font-size:1.2rem;font-weight:700;margin:0 0 4px;}
+  h2{font-size:1rem;font-weight:700;margin:20px 0 4px;}
   p.sub{margin:0 0 16px;color:rgb(130,120,110);font-size:.85rem;}
   #canvas{display:block;width:100%;max-width:512px;aspect-ratio:1;
     background:#000;border-radius:8px;touch-action:none;
@@ -42,6 +43,13 @@
   <button type="button" id="submit" hidden>Submit</button>
   <label id="uploadLabel" for="upload"><span id="uploadLabelText">Upload picture</span></label>
   <input type="file" id="upload" accept="image/jpeg,image/png" style="display:none;">
+</div>
+<h2>Kaleidoscope</h2>
+<p class="sub">Animates whatever's currently on the panel (drawn or uploaded).</p>
+<div class="controls">
+  <button type="button" id="kaleidoToggle">Start</button>
+  <label>Fold <input type="range" id="foldCount" min="2" max="32" value="8"><span id="foldCountVal">8</span></label>
+  <label><input type="checkbox" id="motionZoom"> Zoom</label>
 </div>
 <p id="status">Loading status&hellip;</p>
 <script>
@@ -230,6 +238,44 @@
   if (instantCheckbox.checked) {
     ensureWs();
   }
+
+  var kaleidoToggle = document.getElementById('kaleidoToggle');
+  var foldCount = document.getElementById('foldCount');
+  var foldCountVal = document.getElementById('foldCountVal');
+  var motionZoom = document.getElementById('motionZoom');
+  var kaleidoRunning = false;
+
+  function sendKaleidoSettings(extra) {
+    var body = {fold_count: parseInt(foldCount.value, 10), motion_zoom: motionZoom.checked};
+    if (extra) {
+      for (var k in extra) { body[k] = extra[k]; }
+    }
+    return fetch('/api/kaleidoscope', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  }
+
+  foldCount.addEventListener('input', function () { foldCountVal.textContent = foldCount.value; });
+  foldCount.addEventListener('change', function () { sendKaleidoSettings().catch(function () {}); });
+  motionZoom.addEventListener('change', function () { sendKaleidoSettings().catch(function () {}); });
+
+  kaleidoToggle.addEventListener('click', function () {
+    kaleidoToggle.disabled = true;
+    sendKaleidoSettings({enabled: !kaleidoRunning})
+      .then(function (r) { return r.json(); })
+      .then(function (s) {
+        kaleidoRunning = !!s.running;
+        kaleidoToggle.textContent = kaleidoRunning ? 'Stop' : 'Start';
+      })
+      .catch(function () {})
+      .finally(function () { kaleidoToggle.disabled = false; });
+  });
+
+  fetch('/api/kaleidoscope').then(function (r) { return r.json(); }).then(function (s) {
+    foldCount.value = s.fold_count;
+    foldCountVal.textContent = s.fold_count;
+    motionZoom.checked = !!s.motion_zoom;
+    kaleidoRunning = !!s.running;
+    kaleidoToggle.textContent = kaleidoRunning ? 'Stop' : 'Start';
+  }).catch(function () {});
 
   fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
     document.getElementById('status').textContent =
