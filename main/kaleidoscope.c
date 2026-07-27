@@ -194,8 +194,15 @@ esp_err_t kaleidobox_kaleidoscope_start(const kaleidobox_image_t *source) {
 
   g_should_run = true;
   xSemaphoreTake(g_task_exited, 0); // claim it - task will give it back on exit
-  BaseType_t ok = xTaskCreate(kaleidoscope_task, "kaleidoscope", 4096, NULL,
-                              tskIDLE_PRIORITY + 1, &g_task);
+  // Pinned to core 1, opposite WiFi's own tasks (core 0) - same fix,
+  // same reasoning as gallery_bg_task's pinning earlier this session
+  // (see gallery.c): an unpinned low-priority task sharing core 0 with
+  // WiFi's own higher-priority processing gets starved under network
+  // activity. There it tanked upload throughput; here (user-reported)
+  // it showed up as stuttering/low frame rate on the panel instead.
+  BaseType_t ok = xTaskCreatePinnedToCore(kaleidoscope_task, "kaleidoscope",
+                                          4096, NULL, tskIDLE_PRIORITY + 1,
+                                          &g_task, 1);
   if (ok != pdPASS) {
     g_should_run = false;
     g_task = NULL;
