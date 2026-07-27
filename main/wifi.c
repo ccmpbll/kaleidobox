@@ -1,7 +1,9 @@
 #include "wifi.h"
 
+#include "canvas.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "font_5x7.h"
 #include "http_server.h"
@@ -9,6 +11,7 @@
 #include "mdns.h"
 #include "wifi_ap.h"
 #include <stdio.h>
+#include <string.h>
 
 static const char *TAG = "wifi";
 
@@ -70,6 +73,22 @@ static void start_mdns(void) {
   ESP_LOGI(TAG, "mDNS started - reachable at http://%s.local", hostname);
 }
 
+#define IP_DISPLAY_TIMEOUT_US (10 * 1000 * 1000) // 10s
+
+static esp_timer_handle_t ip_display_timeout_timer = NULL;
+
+// Same trick as kaleidobox_kaleidoscope_stop(): canvas.c's own buffer is
+// untouched by anything the boot-time status display draws (that writes
+// straight to the matrix, bypassing canvas.c entirely), so re-pushing it
+// restores whatever's actually real - blank if nothing's happened since
+// boot, or the user's own drawing/upload if they started using the
+// device during those 10s. Never just blindly clears; that would
+// clobber real content the same way the Clear-button bug did.
+static void ip_display_timeout_cb(void *arg) {
+  (void)arg;
+  kaleidobox_canvas_set_all(kaleidobox_canvas_buffer());
+}
+
 // Only ever called during the initial boot-time connection window (see
 // call sites below) - the matrix runs single-buffered, so drawing here
 // writes straight to the panel, bypassing canvas.c entirely. Fine at
@@ -91,11 +110,26 @@ static void show_ip_on_matrix(const esp_ip4_addr_t *ip) {
   // font). Single line first since a 4-way octet split is uglier than
   // it needs to be for the common case.
   if (!kaleidobox_font_draw_text_fit(28, full, 0, 200, 255)) { // (64-7)/2
-    snprintf(line1, sizeof(line1), "%u.%u", esp_ip4_addr1_16(ip), esp_ip4_addr2_16(ip));
-    snprintf(line2, sizeof(line2), "%u.%u", esp_ip4_addr3_16(ip), esp_ip4_addr4_16(ip));
+    // Wrap the real dotted string at its middle dot rather than
+    // regrouping into two independent "a.b" pairs - keeps the trailing
+    // "." on line 1 (e.g. "255.255." / "255.255"), reading as one
+    // address wrapped in place instead of two disconnected halves.
+    char *first_dot = strchr(full, '.');
+    char *mid_dot = first_dot ? strchr(first_dot + 1, '.') : NULL;
+    size_t split_at = mid_dot ? (size_t)(mid_dot - full) + 1 : strlen(full);
+    snprintf(line1, sizeof(line1), "%.*s", (int)split_at, full);
+    snprintf(line2, sizeof(line2), "%s", full + split_at);
     // Two 7px-tall lines with a 2px gap = 16px block, centered vertically.
     kaleidobox_font_draw_text_centered(24, line1, 0, 200, 255);
     kaleidobox_font_draw_text_centered(33, line2, 0, 200, 255);
+  }
+
+  const esp_timer_create_args_t timer_args = {
+      .callback = ip_display_timeout_cb,
+      .name = "ip_display_timeout",
+  };
+  if (esp_timer_create(&timer_args, &ip_display_timeout_timer) == ESP_OK) {
+    esp_timer_start_once(ip_display_timeout_timer, IP_DISPLAY_TIMEOUT_US);
   }
 }
 

@@ -141,59 +141,94 @@ static const uint8_t *glyph_ptr(char c) {
   return &glyph_bitmap[offset];
 }
 
-static void draw_text_ex(int x, int y, const char *text, uint8_t r, uint8_t g,
-                         uint8_t b, int advance) {
-  for (const char *p = text; *p; p++) {
-    const uint8_t *glyph = glyph_ptr(*p);
-    if (glyph) {
-      for (int row = 0; row < 7; row++) {
-        uint8_t bits = glyph[row];
-        for (int col = 0; col < 5; col++) {
-          if (bits & (0x80 >> col)) {
-            int px = x + col, py = y + row;
-            if (px >= 0 && px < 64 && py >= 0 && py < 64) {
-              kaleidobox_matrix_set_pixel((uint8_t)px, (uint8_t)py, r, g, b);
-            }
+// The 5px glyph cell has real dead columns for narrow characters (e.g.
+// '1' only lights columns 1-3, not 0-4) - drawing every glyph at a
+// fixed advance left those built into the gap, so '1' visually had
+// ~2px of whitespace on each side instead of the intended 1px
+// (user-reported, real bug, not a rendering artifact). Scans the
+// glyph's actual lit columns and returns its true content width plus
+// where that content starts, so step_glyph() below can trim the dead
+// columns instead of baking them into every character's spacing.
+static int glyph_content_width(const uint8_t *glyph, int rows, int *left_out) {
+  int left = 5, right = -1;
+  for (int row = 0; row < rows; row++) {
+    uint8_t bits = glyph[row];
+    for (int col = 0; col < 5; col++) {
+      if (bits & (0x80 >> col)) {
+        if (col < left) left = col;
+        if (col > right) right = col;
+      }
+    }
+  }
+  if (right < 0) { // blank glyph (space) - no lit pixels to measure
+    *left_out = 0;
+    return 3; // reasonable visual space width, roughly a narrow digit's content width
+  }
+  *left_out = left;
+  return right - left + 1;
+}
+
+// Single shared step used by both drawing and width-measuring, so the
+// two can never disagree about how wide a character is - advances *x
+// by this glyph's real content width + 1px gap, and draws it (trimmed
+// to its real left edge, not the full 5px cell) when draw is true.
+static void step_glyph(int *x, char c, bool draw, int y, uint8_t r, uint8_t g,
+                       uint8_t b) {
+  const uint8_t *glyph = glyph_ptr(c);
+  if (!glyph) {
+    *x += 3 + 1; // out-of-range char - treat like a blank/space
+    return;
+  }
+  int rows = is_descender(c) ? 8 : 7; // descenders' tail is their 8th row
+  int left;
+  int width = glyph_content_width(glyph, rows, &left);
+  if (draw) {
+    for (int row = 0; row < rows; row++) {
+      uint8_t bits = glyph[row];
+      for (int col = left; col < left + width; col++) {
+        if (bits & (0x80 >> col)) {
+          int px = *x + (col - left), py = y + row;
+          if (px >= 0 && px < 64 && py >= 0 && py < 64) {
+            kaleidobox_matrix_set_pixel((uint8_t)px, (uint8_t)py, r, g, b);
           }
         }
       }
     }
-    x += advance;
+  }
+  *x += width + 1;
+}
+
+static void draw_line(int x, int y, const char *text, uint8_t r, uint8_t g,
+                      uint8_t b) {
+  for (const char *p = text; *p; p++) {
+    step_glyph(&x, *p, true, y, r, g, b);
   }
 }
 
-static int text_width(const char *text, int advance) {
-  int len = 0;
+static int measure_line(const char *text) {
+  int x = 0;
   for (const char *p = text; *p; p++) {
-    len++;
+    step_glyph(&x, *p, false, 0, 0, 0, 0);
   }
-  // last glyph only needs its 5px, not the trailing advance gap after it
-  return len > 0 ? len * advance - (advance - 5) : 0;
+  return x > 0 ? x - 1 : 0; // trim the last char's unused trailing gap
 }
 
 void kaleidobox_font_draw_text(int x, int y, const char *text, uint8_t r,
                                uint8_t g, uint8_t b) {
-  draw_text_ex(x, y, text, r, g, b, 6); // 5px glyph + 1px spacing
+  draw_line(x, y, text, r, g, b);
 }
 
 void kaleidobox_font_draw_text_centered(int y, const char *text, uint8_t r,
                                         uint8_t g, uint8_t b) {
-  draw_text_ex((64 - text_width(text, 6)) / 2, y, text, r, g, b, 6);
+  draw_line((64 - measure_line(text)) / 2, y, text, r, g, b);
 }
 
 bool kaleidobox_font_draw_text_fit(int y, const char *text, uint8_t r,
                                    uint8_t g, uint8_t b) {
-  // Prefer normal 1px-spaced width; if that doesn't fit, tighten to
-  // glyphs touching (5px advance, 0 gap) before giving up - the gap is
-  // a legibility nicety, not load-bearing, and losing it still reads
-  // fine for short strings like an IP address.
-  if (text_width(text, 6) <= 64) {
-    draw_text_ex((64 - text_width(text, 6)) / 2, y, text, r, g, b, 6);
-    return true;
+  int width = measure_line(text);
+  if (width > 64) {
+    return false; // doesn't fit even with real (kerned) spacing - caller should fall back
   }
-  if (text_width(text, 5) <= 64) {
-    draw_text_ex((64 - text_width(text, 5)) / 2, y, text, r, g, b, 5);
-    return true;
-  }
-  return false; // doesn't fit even packed tight - caller should fall back
+  draw_line((64 - width) / 2, y, text, r, g, b);
+  return true;
 }
