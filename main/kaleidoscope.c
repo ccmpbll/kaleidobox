@@ -15,8 +15,13 @@ static const char *TAG = "kaleidoscope";
 
 #define FRAME_INTERVAL_MS 40 // ~25fps - see start-of-file note below on cost
 #define ROTATION_STEP 0.03f  // rad/frame - full revolution in ~8.4s at 25fps
-#define ZOOM_STEP 0.02f
-#define ZOOM_AMPLITUDE 0.25f // scale oscillates 0.75x..1.25x
+// First values (0.02 rad/frame, ±25%) were real but imperceptible next
+// to the faster rotation - user reported "can't tell a difference".
+// Faster (~4s cycle instead of ~12.5s) and wider swing (0.4x..1.6x
+// instead of 0.75x..1.25x) so it actually reads as zooming, not just
+// theoretically happening.
+#define ZOOM_STEP 0.05f
+#define ZOOM_AMPLITUDE 0.6f
 
 static TaskHandle_t g_task = NULL;
 static SemaphoreHandle_t g_task_exited = NULL;
