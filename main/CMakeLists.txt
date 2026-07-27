@@ -29,8 +29,9 @@ idf_component_register(
     esp_wifi
     esp-tls
     esphome__esp-hub75
-    espressif__esp_jpeg
+    libjpeg-turbo
     fatfs
+    heap
     json
     log
     mdns

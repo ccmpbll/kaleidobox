@@ -447,7 +447,32 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
   free(raw);
   if (err != ESP_OK) {
     httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_sendstr(req, "{\"error\":\"could not decode image - must be JPEG or PNG\"}");
+    // PNG decodes at native resolution with no scaling option (unlike
+    // JPEG), so large PNGs specifically hit a real, low-ish size limit -
+    // both ESP_ERR_INVALID_SIZE (rejected before decoding) and a
+    // still-possible in-decode allocation failure land here. Distinct
+    // message so "upload failed" doesn't read as a generic/unexplained
+    // error when it's actually "this PNG is too big, try JPEG instead".
+    if (err == ESP_ERR_INVALID_SIZE) {
+      httpd_resp_sendstr(req, "{\"error\":\"PNG too large (~2 megapixels max - "
+                              "PNG can't be scaled down during decode like "
+                              "JPEG can). Try a smaller image or save as JPEG "
+                              "instead, which has no such limit.\"}");
+    } else if (err == ESP_ERR_NOT_SUPPORTED) {
+      // Recognized JPEG magic bytes, but libjpeg-turbo rejected it -
+      // baseline and progressive are both supported now (that's the
+      // whole reason it replaced esp_jpeg/tjpgd), so this means a
+      // genuinely corrupt file or an unusual variant (12-bit, CMYK,
+      // arithmetic coding edge case).
+      httpd_resp_sendstr(req, "{\"error\":\"Could not read this JPEG - the file "
+                              "may be corrupt or use an unsupported encoding "
+                              "variant. Try a different image or re-export "
+                              "it, or use PNG instead (under ~2 "
+                              "megapixels).\"}");
+    } else {
+      httpd_resp_sendstr(req, "{\"error\":\"could not decode image - must be "
+                              "JPEG or PNG\"}");
+    }
     return ESP_FAIL;
   }
 
