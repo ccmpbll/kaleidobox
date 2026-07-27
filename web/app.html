@@ -253,9 +253,19 @@
     return fetch('/api/kaleidoscope', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
   }
 
+  // If it's already running, a settings-only POST updates the saved
+  // value but the running animation task only reads fold_count/
+  // motion_zoom once at its own start - it won't pick up the change.
+  // Sending enabled:true too triggers a clean restart (start() already
+  // stops-then-restarts cleanly) so a live change actually takes effect
+  // instead of silently doing nothing until the next manual stop/start.
+  function applyKaleidoSettings() {
+    sendKaleidoSettings(kaleidoRunning ? {enabled: true} : null).catch(function () {});
+  }
+
   foldCount.addEventListener('input', function () { foldCountVal.textContent = foldCount.value; });
-  foldCount.addEventListener('change', function () { sendKaleidoSettings().catch(function () {}); });
-  motionZoom.addEventListener('change', function () { sendKaleidoSettings().catch(function () {}); });
+  foldCount.addEventListener('change', applyKaleidoSettings);
+  motionZoom.addEventListener('change', applyKaleidoSettings);
 
   kaleidoToggle.addEventListener('click', function () {
     kaleidoToggle.disabled = true;
