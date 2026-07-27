@@ -73,6 +73,83 @@ static void start_mdns(void) {
   ESP_LOGI(TAG, "mDNS started - reachable at http://%s.local", hostname);
 }
 
+// Animated "connecting" indicator - 4 signal bars of increasing height,
+// growing one-by-one (lit_count 1..4, repeating) while the STA connect
+// retry loop runs. Same start/stop-with-rendezvous pattern as
+// kaleidoscope.c's animation task: a plain "set a flag and move on"
+// stop would race the task's own redraw loop, which is exactly the
+// class of bug already hit twice this session (kaleidoscope
+// overwriting the panel after Clear, and after its own stop) - here
+// it'd mean a stray bars frame landing after the real IP had already
+// been drawn. stop_wifi_connecting_anim() blocks until the task has
+// actually exited before anything else touches the matrix.
+static TaskHandle_t wifi_anim_task = NULL;
+static SemaphoreHandle_t wifi_anim_task_exited = NULL;
+static volatile bool wifi_anim_should_run = false;
+
+#define WIFI_ANIM_FRAME_MS 350
+
+static void draw_signal_bars(int lit_count) {
+  static const int heights[4] = {6, 12, 18, 24};
+  const int bar_w = 7, gap = 2, baseline_y = 38;
+  int total_w = 4 * bar_w + 3 * gap;
+  int x0 = (64 - total_w) / 2;
+  for (int i = 0; i < 4; i++) {
+    int x = x0 + i * (bar_w + gap);
+    bool lit = i < lit_count;
+    uint8_t r = 0, g = lit ? 200 : 30, b = lit ? 255 : 40;
+    for (int dy = 0; dy < heights[i]; dy++) {
+      uint8_t y = (uint8_t)(baseline_y - dy);
+      for (int dx = 0; dx < bar_w; dx++) {
+        kaleidobox_matrix_set_pixel((uint8_t)(x + dx), y, r, g, b);
+      }
+    }
+  }
+}
+
+static void wifi_connecting_anim_task(void *arg) {
+  (void)arg;
+  int lit = 1;
+  while (wifi_anim_should_run) {
+    kaleidobox_matrix_clear();
+    draw_signal_bars(lit);
+    kaleidobox_font_draw_text_centered(44, "Connecting", 0, 200, 255);
+    lit = (lit % 4) + 1;
+    vTaskDelay(pdMS_TO_TICKS(WIFI_ANIM_FRAME_MS));
+  }
+  xSemaphoreGive(wifi_anim_task_exited);
+  vTaskDelete(NULL);
+}
+
+// Boot-time only, same reasoning as show_ip_on_matrix() - panel's blank,
+// nothing to clobber.
+static void start_wifi_connecting_anim(void) {
+  wifi_anim_task_exited = xSemaphoreCreateBinary();
+  if (!wifi_anim_task_exited) {
+    return;
+  }
+  wifi_anim_should_run = true;
+  if (xTaskCreate(wifi_connecting_anim_task, "wifi_anim", 2048, NULL,
+                  tskIDLE_PRIORITY + 1, &wifi_anim_task) != pdPASS) {
+    wifi_anim_should_run = false;
+    wifi_anim_task = NULL;
+  }
+}
+
+// Must be called (and must finish) before anything else draws to the
+// matrix - see the block comment above. A no-op if the animation was
+// never started (e.g. AP mode never runs it).
+static void stop_wifi_connecting_anim(void) {
+  if (!wifi_anim_task) {
+    return;
+  }
+  wifi_anim_should_run = false;
+  xSemaphoreTake(wifi_anim_task_exited, portMAX_DELAY);
+  vSemaphoreDelete(wifi_anim_task_exited);
+  wifi_anim_task_exited = NULL;
+  wifi_anim_task = NULL;
+}
+
 #define IP_DISPLAY_TIMEOUT_US (10 * 1000 * 1000) // 10s
 
 static esp_timer_handle_t ip_display_timeout_timer = NULL;
@@ -160,6 +237,7 @@ static void event_handler(void *arg, esp_event_base_t event_base,
       // Only the very first connect, same reasoning as show_ip_on_matrix's
       // comment - a later reconnect must not clobber real panel content.
       if (first_connect) {
+        stop_wifi_connecting_anim(); // must finish before show_ip_on_matrix draws
         show_ip_on_matrix(&event->ip_info.ip);
       }
       start_mdns();
@@ -229,8 +307,7 @@ void wifi_task_run(void *pvParameters) {
   // Credentials exist: start STA and attempt to connect. Boot-time only
   // (this function runs once) - panel's still blank at this point, same
   // reasoning as show_ip_on_matrix().
-  kaleidobox_matrix_clear();
-  kaleidobox_font_draw_text_centered(28, "Connecting", 0, 200, 255); // (64-7)/2, single centered line
+  start_wifi_connecting_anim();
 
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
   ESP_ERROR_CHECK(esp_wifi_start());
@@ -254,6 +331,7 @@ void wifi_task_run(void *pvParameters) {
           xSemaphoreGive(wifi_req_semaphore);
           ESP_LOGW(TAG, "Exhausted %d boot retries, entering AP mode",
                    WIFI_MAX_BOOT_RETRIES);
+          stop_wifi_connecting_anim(); // AP mode doesn't use the matrix at all yet
           enter_ap_mode(true);
           return; // unreachable
         }
