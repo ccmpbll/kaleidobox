@@ -40,9 +40,8 @@
   <label><input type="checkbox" id="instant" checked> Instant draw</label>
   <button type="button" class="secondary" id="clear">Clear</button>
   <button type="button" id="submit" hidden>Submit</button>
-  <label id="uploadLabel" for="upload">Upload picture
-    <input type="file" id="upload" accept="image/jpeg,image/png" style="display:none;">
-  </label>
+  <label id="uploadLabel" for="upload"><span id="uploadLabelText">Upload picture</span></label>
+  <input type="file" id="upload" accept="image/jpeg,image/png" style="display:none;">
 </div>
 <p id="status">Loading status&hellip;</p>
 <script>
@@ -188,22 +187,43 @@
   });
 
   var uploadInput = document.getElementById('upload');
-  var uploadLabel = document.getElementById('uploadLabel');
+  var uploadLabelText = document.getElementById('uploadLabelText');
   uploadInput.addEventListener('change', function () {
     var file = uploadInput.files[0];
     if (!file) {
       return;
     }
-    var original = uploadLabel.textContent;
-    uploadLabel.textContent = 'Uploading…';
+
+    // Local preview only - draws the picked image scaled into our 64x64
+    // canvas via the browser's own image decode/scale (native feature,
+    // no server round trip needed just to preview). The real panel
+    // comes from the device's own authoritative box-filter decode of
+    // the original file, sent separately below - this is an
+    // approximation for what's shown here in the browser, nothing more.
+    var objectUrl = URL.createObjectURL(file);
+    var img = new Image();
+    img.onload = function () {
+      ctx.drawImage(img, 0, 0, W, H);
+      var pixels = ctx.getImageData(0, 0, W, H).data;
+      for (var i = 0, p = 0; i < W * H; i++, p += 4) {
+        buffer[i * 3] = pixels[p];
+        buffer[i * 3 + 1] = pixels[p + 1];
+        buffer[i * 3 + 2] = pixels[p + 2];
+      }
+      URL.revokeObjectURL(objectUrl);
+    };
+    img.src = objectUrl;
+
+    var original = uploadLabelText.textContent;
+    uploadLabelText.textContent = 'Uploading…';
     fetch('/api/upload', {method: 'POST', body: file})
       .then(function (r) {
-        uploadLabel.textContent = r.ok ? 'Uploaded!' : 'Failed - retry';
+        uploadLabelText.textContent = r.ok ? 'Uploaded!' : 'Failed - retry';
       })
-      .catch(function () { uploadLabel.textContent = 'Failed - retry'; })
+      .catch(function () { uploadLabelText.textContent = 'Failed - retry'; })
       .finally(function () {
         uploadInput.value = '';
-        setTimeout(function () { uploadLabel.textContent = original; }, 1500);
+        setTimeout(function () { uploadLabelText.textContent = original; }, 1500);
       });
   });
 
