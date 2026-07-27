@@ -7,8 +7,10 @@
 #include "esp_wifi.h"
 #include "font_5x7.h"
 #include "http_server.h"
+#include "kaleidoscope.h"
 #include "matrix.h"
 #include "mdns.h"
+#include "settings.h"
 #include "wifi_ap.h"
 #include <stdio.h>
 #include <string.h>
@@ -164,6 +166,23 @@ static esp_timer_handle_t ip_display_timeout_timer = NULL;
 static void ip_display_timeout_cb(void *arg) {
   (void)arg;
   kaleidobox_canvas_set_all(kaleidobox_canvas_buffer());
+
+  // Resume kaleidoscope here, not at boot in main.c - both this whole
+  // status sequence (connecting bars, then the IP itself) and
+  // kaleidoscope's animation task write straight to the matrix,
+  // bypassing canvas.c. Starting kaleidoscope any earlier would have
+  // it fighting the status display for the panel the entire time,
+  // meaning a reboot with kaleidoscope already running would never
+  // actually show WiFi status or the IP. is_running() guard covers the
+  // unlikely case something already started it during the 10s window.
+  if (kaleidobox_nvs_get_kaleido_running() && !kaleidobox_kaleidoscope_is_running()) {
+    kaleidobox_image_t source = {
+        .rgb888 = (uint8_t *)kaleidobox_canvas_buffer(),
+        .width = CANVAS_WIDTH,
+        .height = CANVAS_HEIGHT,
+    };
+    kaleidobox_kaleidoscope_start(&source);
+  }
 }
 
 // Only ever called during the initial boot-time connection window (see

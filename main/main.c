@@ -1,7 +1,6 @@
 #include "canvas.h"
 #include "esp_log.h"
 #include "gallery.h"
-#include "image_decode.h"
 #include "kaleidoscope.h"
 #include "log.h"
 #include "matrix.h"
@@ -54,17 +53,16 @@ void app_main(void) {
   // canvas from kaleidobox_canvas_init() above untouched.
   kaleidobox_gallery_restore_state();
 
-  // Resume kaleidoscope if it was running when the device last stopped
-  // - reads whatever kaleidobox_gallery_restore_state() just loaded (or
-  // the blank canvas, if it didn't).
-  if (kaleidobox_nvs_get_kaleido_running()) {
-    kaleidobox_image_t source = {
-        .rgb888 = (uint8_t *)kaleidobox_canvas_buffer(),
-        .width = CANVAS_WIDTH,
-        .height = CANVAS_HEIGHT,
-    };
-    kaleidobox_kaleidoscope_start(&source);
-  }
+  // Kaleidoscope resume (if it was running when the device last
+  // stopped) is NOT done here - it's deferred to wifi.c, once the
+  // boot-time WiFi connecting animation / IP display sequence has
+  // actually finished. Both that sequence and kaleidoscope's animation
+  // task write straight to the matrix, bypassing canvas.c - starting
+  // kaleidoscope here would have it fighting the WiFi status display
+  // for the panel for the entire connect+10s-IP-display window,
+  // meaning you'd never actually get to see the WiFi status or IP on
+  // reboot if kaleidoscope had been running. See wifi.c's
+  // ip_display_timeout_cb().
 
   // WiFi runs as its own task - AP fallback mode blocks forever until the
   // device reboots, so it can't live on app_main's own stack/task.
