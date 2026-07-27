@@ -2,6 +2,7 @@
 
 #include "esp_err.h"
 #include <stddef.h>
+#include <stdint.h>
 
 // Saved-image list on the TF card (see sdcard.h) + cycling. Cycling mode
 // (auto-advance with an interval, or manual next/prev) comes from
@@ -31,6 +32,13 @@ size_t kaleidobox_gallery_list(char *buf, size_t buf_size, size_t max_names);
 
 esp_err_t kaleidobox_gallery_next(void);
 esp_err_t kaleidobox_gallery_prev(void);
+
+// Reads a saved entry's raw RGB888 bytes (exactly
+// CANVAS_WIDTH*CANVAS_HEIGHT*3) into caller-provided buf, without
+// touching the live canvas - used by the HTTP thumbnail endpoint
+// (GET /api/gallery/image/<name>), unlike next()/prev() which display
+// it. Same name validation/untrusted-input rules as save()/delete().
+esp_err_t kaleidobox_gallery_read(const char *name, uint8_t *buf);
 
 // Loads the auto-saved canvas snapshot (see gallery.c's background
 // task) into the canvas buffer, if the TF card is mounted and a

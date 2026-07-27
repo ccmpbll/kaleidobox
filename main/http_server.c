@@ -681,6 +681,37 @@ static esp_err_t gallery_delete_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
+static esp_err_t gallery_image_get_handler(httpd_req_t *req) {
+  static const char *prefix = "/api/gallery/image/";
+  size_t prefix_len = strlen(prefix);
+  if (strncmp(req->uri, prefix, prefix_len) != 0) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_sendstr(req, "{\"error\":\"missing name\"}");
+    return ESP_OK;
+  }
+  const char *name = req->uri + prefix_len;
+
+  // Heap, not stack - same 12288-byte-on-8192-byte-httpd-task-stack
+  // class of bug already caught (and fixed) elsewhere in this file.
+  uint8_t *buf = malloc(CANVAS_WIDTH * CANVAS_HEIGHT * 3);
+  if (!buf) {
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  esp_err_t err = kaleidobox_gallery_read(name, buf);
+  if (err != ESP_OK) {
+    free(buf);
+    httpd_resp_set_status(req, err == ESP_ERR_INVALID_ARG ? "400 Bad Request"
+                                                           : "404 Not Found");
+    httpd_resp_sendstr(req, "{\"error\":\"not found\"}");
+    return ESP_OK;
+  }
+  httpd_resp_set_type(req, "application/octet-stream");
+  esp_err_t res = httpd_resp_send(req, (const char *)buf, CANVAS_WIDTH * CANVAS_HEIGHT * 3);
+  free(buf);
+  return res;
+}
+
 static esp_err_t gallery_mode_get_handler(httpd_req_t *req) {
   cJSON *root = cJSON_CreateObject();
   cJSON_AddBoolToObject(root, "auto_advance", kaleidobox_nvs_get_gallery_auto_advance());
@@ -761,10 +792,10 @@ esp_err_t kaleidobox_http_server_start(void) {
   config.stack_size = 8192;
   // Default max_uri_handlers is 8 - we register more than that (root,
   // status, logs, wifi, ota, ws/draw, canvas get/submit, upload,
-  // kaleidoscope x2, gallery x7). Past the cap,
+  // kaleidoscope x2, gallery x8). Past the cap,
   // httpd_register_uri_handler silently drops the excess - printspy-cam
   // hit this exact bug once already (see its http_server.c comment).
-  config.max_uri_handlers = 18;
+  config.max_uri_handlers = 19;
   config.max_open_sockets = LOG_WORKER_COUNT + 6;
   config.lru_purge_enable = true;
   // Same reasoning as printspy-cam: without TCP keepalive, a stale
@@ -819,6 +850,9 @@ esp_err_t kaleidobox_http_server_start(void) {
   httpd_uri_t gallery_delete_uri = {.uri = "/api/gallery/*",
                                     .method = HTTP_DELETE,
                                     .handler = gallery_delete_handler};
+  httpd_uri_t gallery_image_uri = {.uri = "/api/gallery/image/*",
+                                   .method = HTTP_GET,
+                                   .handler = gallery_image_get_handler};
   httpd_uri_t gallery_mode_get_uri = {.uri = "/api/gallery/mode",
                                       .method = HTTP_GET,
                                       .handler = gallery_mode_get_handler};
@@ -846,6 +880,7 @@ esp_err_t kaleidobox_http_server_start(void) {
   httpd_register_uri_handler(server, &gallery_get_uri);
   httpd_register_uri_handler(server, &gallery_save_uri);
   httpd_register_uri_handler(server, &gallery_delete_uri);
+  httpd_register_uri_handler(server, &gallery_image_uri);
   httpd_register_uri_handler(server, &gallery_mode_get_uri);
   httpd_register_uri_handler(server, &gallery_mode_uri);
   httpd_register_uri_handler(server, &gallery_next_uri);

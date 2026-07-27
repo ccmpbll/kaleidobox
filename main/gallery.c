@@ -185,6 +185,24 @@ esp_err_t kaleidobox_gallery_delete(const char *name) {
   return unlink(path) == 0 ? ESP_OK : ESP_ERR_NOT_FOUND;
 }
 
+esp_err_t kaleidobox_gallery_read(const char *name, uint8_t *buf) {
+  if (!name_is_valid(name)) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  if (!kaleidobox_sdcard_is_mounted()) {
+    return ESP_ERR_NOT_SUPPORTED;
+  }
+  char path[sizeof(GALLERY_DIR) + 64];
+  snprintf(path, sizeof(path), GALLERY_DIR "/%s.raw", name);
+  FILE *f = fopen(path, "rb");
+  if (!f) {
+    return ESP_ERR_NOT_FOUND;
+  }
+  size_t n = fread(buf, 1, BUF_SIZE, f);
+  fclose(f);
+  return n == BUF_SIZE ? ESP_OK : ESP_ERR_INVALID_SIZE;
+}
+
 size_t kaleidobox_gallery_list(char *buf, size_t buf_size, size_t max_names) {
   if (buf_size > 0) {
     buf[0] = '\0';

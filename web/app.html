@@ -32,12 +32,17 @@
     color:rgb(41,41,41);font-size:.9rem;font-weight:600;cursor:pointer;}
   #uploadLabel:active{opacity:.85;}
   #status{margin:0;font-size:.8rem;color:rgb(130,120,110);white-space:nowrap;}
-  #galleryList{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;
+  #galleryList{display:flex;flex-direction:column;gap:6px;margin-top:10px;
     max-width:512px;}
-  #galleryList button{background:rgb(230,226,222);color:rgb(41,41,41);
-    font-weight:500;}
-  #galleryList button.active{background:linear-gradient(217deg,#4c6ef5,
-    #22b8cf);color:#fff;}
+  .galleryItem{display:flex;align-items:center;gap:10px;padding:6px 8px;
+    background:#fff;border:1px solid rgb(230,226,222);border-radius:6px;}
+  .galleryItem canvas{width:40px;height:40px;flex-shrink:0;
+    border-radius:4px;background:#000;image-rendering:pixelated;}
+  .galleryItem .name{flex:1;min-width:0;font-size:.85rem;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .galleryItem button.delete{background:none;padding:6px;border-radius:6px;
+    color:rgb(180,70,70);display:flex;flex-shrink:0;}
+  .galleryItem button.delete:active{background:rgb(245,228,228);opacity:1;}
   #galleryEmpty{font-size:.85rem;color:rgb(130,120,110);}
   input[type=text]{padding:8px 10px;border:1px solid rgb(200,195,190);
     border-radius:6px;font-size:.9rem;min-width:0;flex:1;}
@@ -376,6 +381,26 @@
   var galleryInterval = document.getElementById('galleryInterval');
   var galleryIntervalNum = document.getElementById('galleryIntervalNum');
 
+  var TRASH_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round">' +
+    '<polyline points="3 6 5 6 21 6"></polyline>' +
+    '<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>' +
+    '<path d="M10 11v6"></path><path d="M14 11v6"></path>' +
+    '<path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>';
+
+  function paintThumb(canvasEl, bytes) {
+    var tctx = canvasEl.getContext('2d');
+    var imgData = tctx.createImageData(W, H);
+    for (var i = 0, p = 0; i < W * H; i++, p += 4) {
+      imgData.data[p] = bytes[i * 3];
+      imgData.data[p + 1] = bytes[i * 3 + 1];
+      imgData.data[p + 2] = bytes[i * 3 + 2];
+      imgData.data[p + 3] = 255;
+    }
+    tctx.putImageData(imgData, 0, 0);
+  }
+
   function refreshGalleryList() {
     fetch('/api/gallery').then(function (r) { return r.json(); }).then(function (s) {
       var images = s.images || [];
@@ -385,16 +410,37 @@
         return;
       }
       images.forEach(function (name) {
-        var btn = document.createElement('button');
-        btn.type = 'button';
-        btn.textContent = name + ' ×';
-        btn.title = 'Delete ' + name;
-        btn.addEventListener('click', function () {
+        var row = document.createElement('div');
+        row.className = 'galleryItem';
+
+        var thumb = document.createElement('canvas');
+        thumb.width = W;
+        thumb.height = H;
+        row.appendChild(thumb);
+
+        var label = document.createElement('span');
+        label.className = 'name';
+        label.textContent = name;
+        row.appendChild(label);
+
+        var delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'delete';
+        delBtn.title = 'Delete ' + name;
+        delBtn.innerHTML = TRASH_ICON_SVG;
+        delBtn.addEventListener('click', function () {
           fetch('/api/gallery/' + encodeURIComponent(name), {method: 'DELETE'})
             .then(refreshGalleryList)
             .catch(function () {});
         });
-        galleryList.appendChild(btn);
+        row.appendChild(delBtn);
+
+        galleryList.appendChild(row);
+
+        fetch('/api/gallery/image/' + encodeURIComponent(name))
+          .then(function (r) { return r.arrayBuffer(); })
+          .then(function (ab) { paintThumb(thumb, new Uint8Array(ab)); })
+          .catch(function () {});
       });
     }).catch(function () {});
   }
