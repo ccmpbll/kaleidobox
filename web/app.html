@@ -177,7 +177,17 @@
     buffer.fill(0);
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, W, H);
-    fetch('/api/canvas/submit', {method: 'POST', body: buffer}).catch(function () {});
+    // Stop a running kaleidoscope first, and wait for it, before pushing
+    // the clear - otherwise kaleidoscope_stop()'s own "restore the
+    // original image" behavior can land after our clear and undo it.
+    var stopKaleido = kaleidoRunning ? sendKaleidoSettings({enabled: false}) : Promise.resolve();
+    stopKaleido
+      .then(function () {
+        kaleidoRunning = false;
+        kaleidoToggle.textContent = 'Start';
+        return fetch('/api/canvas/submit', {method: 'POST', body: buffer});
+      })
+      .catch(function () {});
   });
 
   submitBtn.addEventListener('click', function () {
