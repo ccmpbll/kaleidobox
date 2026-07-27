@@ -195,6 +195,14 @@ void kaleidobox_kaleidoscope_stop(void) {
   g_should_run = false;
   xSemaphoreTake(g_task_exited, portMAX_DELAY); // wait for the task to actually exit
   g_task = NULL;
+
+  // The animation task writes frames straight to the matrix
+  // (kaleidobox_matrix_draw_rgb888), bypassing canvas.c entirely - so
+  // canvas.c's own buffer still holds whatever was on the panel before
+  // the animation started, untouched. Re-push it so the panel goes back
+  // to the original image instead of freezing on the last animated
+  // frame.
+  kaleidobox_canvas_set_all(kaleidobox_canvas_buffer());
 }
 
 bool kaleidobox_kaleidoscope_is_running(void) { return g_task != NULL; }
