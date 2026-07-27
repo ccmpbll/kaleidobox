@@ -299,7 +299,15 @@ static esp_err_t ota_post_handler(httpd_req_t *req) {
 
 // --- Draw mode ---------------------------------------------------------
 
-// One WS text frame per pixel edit: {"x":n,"y":n,"r":n,"g":n,"b":n}.
+// One WS text frame per pointermove batch: {"pixels":[{"x":n,"y":n,"r":n,
+// "g":n,"b":n}, ...]}. The client interpolates and batches a whole
+// stroke segment (since consecutive draw one at a time, not per-message)
+// - originally one message per pixel, but that both dropped pixels
+// during fast drags (no interpolation between sparse pointermove
+// samples) and added visible drag lag (one WS round trip per pixel).
+// Heap-allocated receive buffer, not a fixed stack one - a batch can be
+// several KB, and this handler's task stack is only 8192 bytes total.
+//
 // Unlike /api/logs, a WS handler doesn't need the async pool - httpd
 // invokes it per-frame as data arrives on the socket rather than once
 // with a handler that blocks for the connection's whole lifetime.
@@ -312,33 +320,47 @@ static esp_err_t ws_draw_handler(httpd_req_t *req) {
   httpd_ws_frame_t ws_pkt = {0};
   ws_pkt.type = HTTPD_WS_TYPE_TEXT;
   esp_err_t ret = httpd_ws_recv_frame(req, &ws_pkt, 0);
-  if (ret != ESP_OK || ws_pkt.len == 0 || ws_pkt.len > 128) {
+  if (ret != ESP_OK || ws_pkt.len == 0 || ws_pkt.len > 16384) {
     return ret;
   }
 
-  char buf[129];
+  char *buf = malloc(ws_pkt.len + 1);
+  if (!buf) {
+    return ESP_ERR_NO_MEM;
+  }
   ws_pkt.payload = (uint8_t *)buf;
   ret = httpd_ws_recv_frame(req, &ws_pkt, ws_pkt.len);
   if (ret != ESP_OK) {
+    free(buf);
     return ret;
   }
   buf[ws_pkt.len] = '\0';
 
   cJSON *json = cJSON_Parse(buf);
+  free(buf);
   if (!json) {
     return ESP_OK; // drop malformed frame, keep the connection alive
   }
-  cJSON *x = cJSON_GetObjectItem(json, "x");
-  cJSON *y = cJSON_GetObjectItem(json, "y");
-  cJSON *r = cJSON_GetObjectItem(json, "r");
-  cJSON *g = cJSON_GetObjectItem(json, "g");
-  cJSON *b = cJSON_GetObjectItem(json, "b");
-  if (cJSON_IsNumber(x) && cJSON_IsNumber(y) && cJSON_IsNumber(r) &&
-      cJSON_IsNumber(g) && cJSON_IsNumber(b)) {
-    kaleidobox_canvas_set_pixel((uint8_t)x->valueint, (uint8_t)y->valueint,
-                               (uint8_t)r->valueint, (uint8_t)g->valueint,
-                               (uint8_t)b->valueint);
-    kaleidobox_canvas_flip(); // one edit per message - show it immediately
+
+  cJSON *pixels = cJSON_GetObjectItem(json, "pixels");
+  if (cJSON_IsArray(pixels)) {
+    cJSON *px = NULL;
+    cJSON_ArrayForEach(px, pixels) {
+      cJSON *x = cJSON_GetObjectItem(px, "x");
+      cJSON *y = cJSON_GetObjectItem(px, "y");
+      cJSON *r = cJSON_GetObjectItem(px, "r");
+      cJSON *g = cJSON_GetObjectItem(px, "g");
+      cJSON *b = cJSON_GetObjectItem(px, "b");
+      if (cJSON_IsNumber(x) && cJSON_IsNumber(y) && cJSON_IsNumber(r) &&
+          cJSON_IsNumber(g) && cJSON_IsNumber(b)) {
+        kaleidobox_canvas_set_pixel((uint8_t)x->valueint, (uint8_t)y->valueint,
+                                   (uint8_t)r->valueint, (uint8_t)g->valueint,
+                                   (uint8_t)b->valueint);
+      }
+    }
+    // No kaleidobox_canvas_flip() here - single-buffer mode (see
+    // matrix.cpp) means set_pixel() is already live, and flip() would
+    // just be a no-op warning log per batch.
   }
   cJSON_Delete(json);
   return ESP_OK;
@@ -354,24 +376,34 @@ static esp_err_t canvas_submit_post_handler(httpd_req_t *req) {
     return ESP_FAIL;
   }
 
-  uint8_t buf[CANVAS_WIDTH * CANVAS_HEIGHT * 3];
+  // Heap-allocated, not a stack array - 12288 bytes doesn't fit this
+  // handler's httpd task stack (8192 bytes total, see
+  // kaleidobox_http_server_start's config.stack_size). A stack buffer
+  // this size was silently corrupting the task stack on every
+  // submit/clear - real bug, not hypothetical, matches the "breaks
+  // until refresh" symptom.
+  uint8_t *buf = malloc(expected);
+  if (!buf) {
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+
   size_t received = 0;
   while (received < expected) {
     int r = httpd_req_recv(req, (char *)buf + received, expected - received);
     if (r <= 0) {
+      free(buf);
       httpd_resp_send_500(req);
       return ESP_FAIL;
     }
     received += r;
   }
 
-  for (int y = 0; y < CANVAS_HEIGHT; y++) {
-    for (int x = 0; x < CANVAS_WIDTH; x++) {
-      size_t idx = (y * CANVAS_WIDTH + x) * 3;
-      kaleidobox_canvas_set_pixel(x, y, buf[idx], buf[idx + 1], buf[idx + 2]);
-    }
-  }
-  kaleidobox_canvas_flip(); // one flip for the whole grid, not per-pixel
+  // One bulk driver call, not CANVAS_WIDTH*CANVAS_HEIGHT individual
+  // set_pixel() calls - see matrix.h/canvas.h for why that mattered
+  // (racing the live DMA scan, visible as bright flickering pixels).
+  kaleidobox_canvas_set_all(buf);
+  free(buf);
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_sendstr(req, "{\"ok\":true}");

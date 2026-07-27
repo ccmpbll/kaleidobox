@@ -29,3 +29,8 @@ void kaleidobox_canvas_set_pixel(uint8_t x, uint8_t y, uint8_t r, uint8_t g,
 const uint8_t *kaleidobox_canvas_buffer(void) { return g_buffer; }
 
 void kaleidobox_canvas_flip(void) { kaleidobox_matrix_flip(); }
+
+void kaleidobox_canvas_set_all(const uint8_t *rgb888) {
+  memcpy(g_buffer, rgb888, sizeof(g_buffer));
+  kaleidobox_matrix_draw_rgb888(g_buffer, CANVAS_WIDTH, CANVAS_HEIGHT);
+}

@@ -51,9 +51,11 @@
   var clearBtn = document.getElementById('clear');
   var ws = null;
   var drawing = false;
-  var lastCell = null; // "x,y" of the last cell painted this stroke - dedupes
-                        // dense pointermove events without dropping any
-                        // distinct cell during a fast drag.
+  var lastCell = null; // [x,y] of the last cell painted this stroke, or
+                        // null at the start of a stroke - used to
+                        // interpolate a line to the next reported cell,
+                        // since pointermove doesn't sample continuously
+                        // and a fast drag can otherwise jump over cells.
 
   function hexToRgb(hex) {
     var v = parseInt(hex.slice(1), 16);
@@ -67,6 +69,25 @@
     ctx.fillRect(x, y, 1, 1);
   }
 
+  // Standard Bresenham line - every grid cell between (x0,y0) and
+  // (x1,y1) inclusive, no gaps.
+  function lineCells(x0, y0, x1, y1) {
+    var cells = [];
+    var dx = Math.abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+    var dy = -Math.abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    var err = dx + dy, e2;
+    while (true) {
+      cells.push([x0, y0]);
+      if (x0 === x1 && y0 === y1) {
+        break;
+      }
+      e2 = 2 * err;
+      if (e2 >= dy) { err += dy; x0 += sx; }
+      if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+    return cells;
+  }
+
   function ensureWs() {
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
       return;
@@ -74,18 +95,17 @@
     ws = new WebSocket('ws://' + location.host + '/ws/draw');
   }
 
-  function sendPixel(x, y, r, g, b) {
-    if (!instantCheckbox.checked) {
+  function sendBatch(pixels) {
+    if (!instantCheckbox.checked || pixels.length === 0) {
       return;
     }
     ensureWs();
     if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({x: x, y: y, r: r, g: g, b: b}));
+      ws.send(JSON.stringify({pixels: pixels}));
     }
-    // If the socket is still CONNECTING, this edit is dropped - acceptable
-    // for a live-draw stream (not a queued/guaranteed-delivery channel);
-    // the next cell touched during the same stroke will send fine once
-    // the socket is open.
+    // If the socket is still CONNECTING, this batch is dropped -
+    // acceptable for a live-draw stream (not queued/guaranteed
+    // delivery); the next batch sends fine once the socket is open.
   }
 
   function cellFromEvent(e) {
@@ -99,14 +119,23 @@
 
   function handlePointer(e) {
     var cell = cellFromEvent(e);
-    var key = cell[0] + ',' + cell[1];
-    if (key === lastCell) {
-      return;
+    var cells;
+    if (!lastCell) {
+      cells = [cell];
+    } else if (lastCell[0] === cell[0] && lastCell[1] === cell[1]) {
+      return; // pointer moved but stayed in the same cell - nothing new
+    } else {
+      cells = lineCells(lastCell[0], lastCell[1], cell[0], cell[1]).slice(1); // skip lastCell, already painted
     }
-    lastCell = key;
+    lastCell = cell;
+
     var rgb = hexToRgb(colorInput.value);
-    paintLocal(cell[0], cell[1], rgb[0], rgb[1], rgb[2]);
-    sendPixel(cell[0], cell[1], rgb[0], rgb[1], rgb[2]);
+    var batch = [];
+    for (var i = 0; i < cells.length; i++) {
+      paintLocal(cells[i][0], cells[i][1], rgb[0], rgb[1], rgb[2]);
+      batch.push({x: cells[i][0], y: cells[i][1], r: rgb[0], g: rgb[1], b: rgb[2]});
+    }
+    sendBatch(batch);
   }
 
   canvas.addEventListener('pointerdown', function (e) {

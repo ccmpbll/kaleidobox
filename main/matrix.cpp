@@ -19,10 +19,20 @@ static Hub75Config make_config() {
   cfg.panel_height = 64;
   cfg.scan_wiring = Hub75ScanWiring::STANDARD_TWO_SCAN;
   cfg.shift_driver = Hub75ShiftDriver::GENERIC;
-  // Double-buffered to match kaleidobox_matrix_flip()'s tear-free-update
-  // contract (matrix.h) - the kaleidoscope animation and instant-draw
-  // mode both rely on flip() only swapping once a frame is fully drawn.
-  cfg.double_buffer = true;
+  // Single-buffered - NOT double_buffer=true. Tried double buffering
+  // first (matches kaleidoscope mode's eventual needs - full-frame
+  // redraw every tick keeps both buffers converged), but it actively
+  // breaks draw mode: set_pixel() only ever writes into whichever
+  // buffer is currently "back", so two sparse edits separated by a
+  // flip land in two different, divergent buffers - every flip after
+  // that showed whichever buffer was missing the other's edits, i.e.
+  // the whole panel visibly flashing while drawing. Confirmed on real
+  // hardware, not theoretical. Single-buffer mode writes straight to
+  // the buffer being scanned - draw mode wants pixels live immediately
+  // anyway, so this is the correct mode for it, not just a workaround.
+  // Revisit double buffering specifically for kaleidoscope mode later,
+  // where the divergence bug doesn't apply.
+  cfg.double_buffer = false;
 
   cfg.pins.r1 = MATRIX_PIN_R1;
   cfg.pins.g1 = MATRIX_PIN_G1;
@@ -66,6 +76,15 @@ extern "C" void kaleidobox_matrix_set_pixel(uint8_t x, uint8_t y, uint8_t r,
     return;
   }
   driver->set_pixel(x, y, r, g, b);
+}
+
+extern "C" void kaleidobox_matrix_draw_rgb888(const uint8_t *rgb888, uint16_t w,
+                                              uint16_t h) {
+  if (!driver) {
+    return;
+  }
+  driver->draw_pixels(0, 0, w, h, rgb888, Hub75PixelFormat::RGB888,
+                      Hub75ColorOrder::RGB, false);
 }
 
 extern "C" void kaleidobox_matrix_flip(void) {
