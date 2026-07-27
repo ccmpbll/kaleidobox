@@ -6,7 +6,9 @@
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions-8m.csv"
 CONFIG_SPIRAM=y
-# TODO: confirm octal vs quad PSRAM mode against Waveshare's actual module
-# datasheet before real hardware bring-up - assumed octal (same as
-# Freenove's ESP32-S3-WROOM-1 module) but not yet verified for this board.
+# Confirmed, not assumed: the schematic (docs/ESP32-S3-RGB-Matrix-
+# Schematics.pdf) labels the module "ESP32-S3-WROOM-2-N32R16V" - WROOM-2
+# is the module family that exclusively uses octal PSRAM (that's the
+# actual distinguishing feature vs WROOM-1, which is quad-only). No
+# ambiguity here the way there was for board_pins.h's GPIO numbers.
 CONFIG_SPIRAM_MODE_OCT=y
