@@ -445,6 +445,45 @@
     }).catch(function () {});
   }
 
+  // Auto-advance can swap the canvas out from under a slow save - type
+  // a name while it's cycling and the image you meant to save may
+  // already be gone by the time you hit the button, saving whatever
+  // replaced it instead (gallery_save() always saves "whatever's on
+  // canvas right now", which is a moving target while cycling). Pause
+  // the device's own auto-advance the moment the name field gets
+  // focus, freezing the canvas, and resume once the save completes.
+  // Safety-net timeout in case the field is focused and abandoned
+  // without saving, so auto-advance can't get stuck off.
+  var pausedForSave = false;
+  var pauseTimeoutId = null;
+
+  function pauseAutoAdvanceForSave() {
+    if (!galleryAuto.checked || pausedForSave) {
+      return;
+    }
+    pausedForSave = true;
+    fetch('/api/gallery/mode', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({auto_advance: false, interval_seconds: parseInt(galleryInterval.value, 10)}),
+    }).catch(function () {});
+    clearTimeout(pauseTimeoutId);
+    pauseTimeoutId = setTimeout(resumeAutoAdvanceIfPaused, 60000);
+  }
+
+  function resumeAutoAdvanceIfPaused() {
+    clearTimeout(pauseTimeoutId);
+    if (!pausedForSave) {
+      return;
+    }
+    pausedForSave = false;
+    if (galleryAuto.checked) {
+      sendGalleryMode().catch(function () {}); // checkbox was never touched - this just re-enables it device-side
+    }
+  }
+
+  gallerySaveName.addEventListener('focus', pauseAutoAdvanceForSave);
+
   gallerySaveBtn.addEventListener('click', function () {
     var name = gallerySaveName.value.trim();
     if (!name) {
@@ -458,7 +497,10 @@
     })
       .then(function () { gallerySaveName.value = ''; refreshGalleryList(); })
       .catch(function () {})
-      .finally(function () { gallerySaveBtn.disabled = false; });
+      .finally(function () {
+        gallerySaveBtn.disabled = false;
+        resumeAutoAdvanceIfPaused();
+      });
   });
 
   galleryPrevBtn.addEventListener('click', function () {
