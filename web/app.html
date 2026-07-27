@@ -239,6 +239,26 @@
     ensureWs();
   }
 
+  // Repaint from whatever's actually on the panel right now - the local
+  // buffer above starts all-zero on every page load/refresh, which
+  // doesn't reflect device state (draw, upload, and gallery all leave
+  // something on the panel that persists across refreshes).
+  fetch('/api/canvas')
+    .then(function (r) { return r.arrayBuffer(); })
+    .then(function (ab) {
+      var bytes = new Uint8Array(ab);
+      buffer.set(bytes);
+      var imgData = ctx.createImageData(W, H);
+      for (var i = 0, p = 0; i < W * H; i++, p += 4) {
+        imgData.data[p] = bytes[i * 3];
+        imgData.data[p + 1] = bytes[i * 3 + 1];
+        imgData.data[p + 2] = bytes[i * 3 + 2];
+        imgData.data[p + 3] = 255;
+      }
+      ctx.putImageData(imgData, 0, 0);
+    })
+    .catch(function () {});
+
   var kaleidoToggle = document.getElementById('kaleidoToggle');
   var foldCount = document.getElementById('foldCount');
   var foldCountVal = document.getElementById('foldCountVal');

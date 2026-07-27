@@ -368,6 +368,17 @@ static esp_err_t ws_draw_handler(httpd_req_t *req) {
 
 // Draw-then-submit mode: raw CANVAS_WIDTH*CANVAS_HEIGHT*3 RGB888 body,
 // one shot.
+// Raw RGB888 readback of the live canvas buffer - lets the web UI
+// repaint itself on page load instead of showing a blank grid that
+// doesn't match what's actually on the panel (draw, upload, and
+// gallery all mutate this same buffer via kaleidobox_canvas_set_all/
+// set_pixel, so this one endpoint covers all three sources).
+static esp_err_t canvas_get_handler(httpd_req_t *req) {
+  httpd_resp_set_type(req, "application/octet-stream");
+  return httpd_resp_send(req, (const char *)kaleidobox_canvas_buffer(),
+                          CANVAS_WIDTH * CANVAS_HEIGHT * 3);
+}
+
 static esp_err_t canvas_submit_post_handler(httpd_req_t *req) {
   const size_t expected = CANVAS_WIDTH * CANVAS_HEIGHT * 3;
   if (req->content_len != expected) {
@@ -691,11 +702,11 @@ esp_err_t kaleidobox_http_server_start(void) {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.stack_size = 8192;
   // Default max_uri_handlers is 8 - we register more than that (root,
-  // status, logs, wifi, ota, ws/draw, canvas/submit, upload,
+  // status, logs, wifi, ota, ws/draw, canvas get/submit, upload,
   // kaleidoscope x2, gallery x6). Past the cap,
   // httpd_register_uri_handler silently drops the excess - printspy-cam
   // hit this exact bug once already (see its http_server.c comment).
-  config.max_uri_handlers = 16;
+  config.max_uri_handlers = 17;
   config.max_open_sockets = LOG_WORKER_COUNT + 6;
   config.lru_purge_enable = true;
   // Same reasoning as printspy-cam: without TCP keepalive, a stale
@@ -725,6 +736,8 @@ esp_err_t kaleidobox_http_server_start(void) {
                              .method = HTTP_GET,
                              .handler = ws_draw_handler,
                              .is_websocket = true};
+  httpd_uri_t canvas_get_uri = {
+      .uri = "/api/canvas", .method = HTTP_GET, .handler = canvas_get_handler};
   httpd_uri_t canvas_submit_uri = {.uri = "/api/canvas/submit",
                                    .method = HTTP_POST,
                                    .handler = canvas_submit_post_handler};
@@ -760,6 +773,7 @@ esp_err_t kaleidobox_http_server_start(void) {
   httpd_register_uri_handler(server, &wifi_uri);
   httpd_register_uri_handler(server, &ota_uri);
   httpd_register_uri_handler(server, &ws_draw_uri);
+  httpd_register_uri_handler(server, &canvas_get_uri);
   httpd_register_uri_handler(server, &canvas_submit_uri);
   httpd_register_uri_handler(server, &upload_uri);
   httpd_register_uri_handler(server, &kaleidoscope_get_uri);
