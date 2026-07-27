@@ -16,6 +16,14 @@ static const char *TAG = "image_decode";
 // hundred px, don't need full native res" plan (see image_decode.h).
 #define JPEG_MAX_DIMENSION 512
 
+// Progressive JPEG only - see the check in decode_jpeg() for why baseline
+// doesn't need this. Binary-searched on real hardware: 4.7MP (4,687,500px)
+// decodes fine, 5.3MP fails with libjpeg's own out-of-memory error. Capped
+// meaningfully below the confirmed-good point, not right at it - free heap
+// varies run to run with server uptime/fragmentation, so a cap that just
+// barely fit once isn't reliably safe on every request.
+#define JPEG_PROGRESSIVE_MAX_PIXELS 4500000u
+
 // PNG has no built-in scaled decode (lodepng always decodes at native
 // resolution) - reject outright above this rather than risk a huge
 // allocation. A total-pixel-count cap, not a per-dimension one - an
@@ -87,6 +95,29 @@ static esp_err_t decode_jpeg(const uint8_t *data, size_t len,
   jpeg_create_decompress(&cinfo);
   jpeg_mem_src(&cinfo, data, len);
   jpeg_read_header(&cinfo, TRUE);
+
+  // Unlike baseline (decoded scanline-by-scanline, so scale_denom genuinely
+  // bounds peak memory), progressive JPEG requires buffering every DCT
+  // coefficient for the WHOLE image before any output can be produced -
+  // scan order refines coefficients across the full image over multiple
+  // passes, so there's no way to decode a strip at a time. That buffer's
+  // size is driven by native resolution, not the scaled output size we
+  // actually want. Binary-searched the real ceiling on this board (16MB
+  // PSRAM, shared with everything else already resident): 4.7MP progressive
+  // decodes fine, 5.3MP fails with libjpeg's own "Insufficient memory"
+  // error. Capped with margin below the confirmed failure point - same
+  // methodology as PNG_MAX_PIXELS below. Baseline JPEGs have no such cap;
+  // scale_denom already bounds them.
+  if (cinfo.progressive_mode &&
+      (uint32_t)cinfo.image_width * cinfo.image_height > JPEG_PROGRESSIVE_MAX_PIXELS) {
+    ESP_LOGW(TAG, "progressive JPEG %ux%u (%u px) exceeds %u px max - "
+                  "progressive decode needs the full-resolution coefficient "
+                  "buffer regardless of output scale, unlike baseline",
+            cinfo.image_width, cinfo.image_height,
+            cinfo.image_width * cinfo.image_height, JPEG_PROGRESSIVE_MAX_PIXELS);
+    jpeg_destroy_decompress(&cinfo);
+    return ESP_ERR_INVALID_SIZE;
+  }
 
   uint16_t native_max = cinfo.image_width > cinfo.image_height
                             ? cinfo.image_width

@@ -442,6 +442,7 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
     return ESP_FAIL;
   }
 
+  int64_t t_recv_start = esp_timer_get_time();
   size_t received = 0;
   while (received < req->content_len) {
     int r = httpd_req_recv(req, (char *)raw + received, req->content_len - received);
@@ -452,23 +453,40 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
     }
     received += r;
   }
+  int64_t t_recv_end = esp_timer_get_time();
 
   kaleidobox_image_t img = {0};
   esp_err_t err = kaleidobox_image_decode(raw, req->content_len, &img);
+  int64_t t_decode_end = esp_timer_get_time();
   free(raw);
+  // %lld isn't supported by ESP-IDF's default nano-printf (CONFIG_NEWLIB_NANO_FORMAT) -
+  // silently corrupts the whole line, including args after it. Millisecond
+  // deltas fit comfortably in int32 here, so cast down instead.
+  ESP_LOGI(TAG, "upload timing: recv=%dms decode=%dms (body=%u bytes)",
+           (int)((t_recv_end - t_recv_start) / 1000), (int)((t_decode_end - t_recv_end) / 1000),
+           (unsigned)req->content_len);
   if (err != ESP_OK) {
     httpd_resp_set_status(req, "400 Bad Request");
     // PNG decodes at native resolution with no scaling option (unlike
-    // JPEG), so large PNGs specifically hit a real, low-ish size limit -
-    // both ESP_ERR_INVALID_SIZE (rejected before decoding) and a
-    // still-possible in-decode allocation failure land here. Distinct
-    // message so "upload failed" doesn't read as a generic/unexplained
-    // error when it's actually "this PNG is too big, try JPEG instead".
+    // baseline JPEG), so large PNGs hit a real, low-ish size limit - both
+    // ESP_ERR_INVALID_SIZE (rejected before decoding) and a still-possible
+    // in-decode allocation failure land here. Progressive JPEG hits the
+    // same ESP_ERR_INVALID_SIZE for a related but distinct reason: it
+    // needs the full-resolution DCT coefficient buffer up front regardless
+    // of the scaled output size (unlike baseline, which streams
+    // scanline-by-scanline) - see the check in image_decode.c's
+    // decode_jpeg(). Both get the same generic-enough message rather than
+    // two near-duplicate ones, since the actionable advice is the same
+    // either way: the file's too big for how this device has to decode it.
     if (err == ESP_ERR_INVALID_SIZE) {
-      httpd_resp_sendstr(req, "{\"error\":\"PNG too large (~2 megapixels max - "
-                              "PNG can't be scaled down during decode like "
-                              "JPEG can). Try a smaller image or save as JPEG "
-                              "instead, which has no such limit.\"}");
+      httpd_resp_sendstr(req, "{\"error\":\"Image too large for this device to "
+                              "decode (progressive JPEG needs its full "
+                              "resolution in memory regardless of display "
+                              "size - about 4.5 megapixels max; PNG has no "
+                              "scaling at all - about 2 megapixels max). Try "
+                              "a smaller image, or re-save as a baseline "
+                              "(non-progressive) JPEG, which has no such "
+                              "limit.\"}");
     } else if (err == ESP_ERR_NOT_SUPPORTED) {
       // Recognized JPEG magic bytes, but libjpeg-turbo rejected it -
       // baseline and progressive are both supported now (that's the
@@ -497,9 +515,14 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
   }
+  int64_t t_resize_start = esp_timer_get_time();
   kaleidobox_image_resize_to_canvas(&img, resized);
+  int64_t t_resize_end = esp_timer_get_time();
   kaleidobox_image_free(&img);
   kaleidobox_canvas_set_all(resized);
+  int64_t t_set_all_end = esp_timer_get_time();
+  ESP_LOGI(TAG, "upload timing: resize=%dms set_all=%dms",
+           (int)((t_resize_end - t_resize_start) / 1000), (int)((t_set_all_end - t_resize_end) / 1000));
   free(resized);
 
   httpd_resp_set_type(req, "application/json");

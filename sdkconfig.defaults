@@ -31,3 +31,16 @@ CONFIG_LWIP_MAX_SOCKETS=16
 # real crash log ("stack overflow in task sys_evt"), not a guess.
 # Doubled for headroom rather than trimmed to the observed edge.
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
+
+# Real phone photos are multi-MB uploads (/api/upload). ESP-IDF's default
+# TCP window (5760 bytes = 4x MSS) forces many small recv round trips for
+# a body that size - measured on real hardware: a 3.5MB upload spent
+# 39.4s just in the httpd_req_recv loop (vs 2.2s to actually decode it)
+# before this change, ~89KB/s effective throughput on a local WiFi link
+# that should easily do multiple MB/s. Board has 16MB PSRAM and headroom
+# in internal RAM (LWIP TCP buffers are internal-RAM-only), so there's no
+# reason to keep the conservative low-RAM-device default.
+CONFIG_LWIP_TCP_WND_DEFAULT=65535
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=65535
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=32
+CONFIG_LWIP_TCP_SNDMBOX_SIZE=32
