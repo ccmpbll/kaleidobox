@@ -84,8 +84,10 @@
 <div class="controls">
   <button type="button" class="secondary" id="galleryPrev">&larr; Prev</button>
   <button type="button" class="secondary" id="galleryNext">Next &rarr;</button>
-  <label><input type="checkbox" id="galleryAuto"> Auto-advance every
-    <input type="range" id="galleryInterval" min="5" max="300" value="30" style="width:100px;">
+  <button type="button" id="galleryAutoToggle">Start rotation</button>
+</div>
+<div class="controls">
+  <label>Every <input type="range" id="galleryInterval" min="5" max="300" value="30" style="width:100px;">
     <input type="number" id="galleryIntervalNum" min="5" max="300" value="30" style="width:56px;">s</label>
 </div>
 <div id="galleryList"></div>
@@ -383,7 +385,8 @@
   var galleryUploadLabelText = document.getElementById('galleryUploadLabelText');
   var galleryPrevBtn = document.getElementById('galleryPrev');
   var galleryNextBtn = document.getElementById('galleryNext');
-  var galleryAuto = document.getElementById('galleryAuto');
+  var galleryAutoBtn = document.getElementById('galleryAutoToggle');
+  var galleryAutoRunning = false;
   var galleryInterval = document.getElementById('galleryInterval');
   var galleryIntervalNum = document.getElementById('galleryIntervalNum');
 
@@ -471,7 +474,7 @@
   var pauseTimeoutId = null;
 
   function pauseAutoAdvanceForSave() {
-    if (!galleryAuto.checked || pausedForSave) {
+    if (!galleryAutoRunning || pausedForSave) {
       return;
     }
     pausedForSave = true;
@@ -490,8 +493,8 @@
       return;
     }
     pausedForSave = false;
-    if (galleryAuto.checked) {
-      sendGalleryMode().catch(function () {}); // checkbox was never touched - this just re-enables it device-side
+    if (galleryAutoRunning) {
+      sendGalleryMode().catch(function () {}); // button state was never touched - this just re-enables it device-side
     }
   }
 
@@ -573,10 +576,14 @@
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
-        auto_advance: galleryAuto.checked,
+        auto_advance: galleryAutoRunning,
         interval_seconds: parseInt(galleryInterval.value, 10),
       }),
     });
+  }
+
+  function setGalleryAutoButtonText() {
+    galleryAutoBtn.textContent = galleryAutoRunning ? 'Stop rotation' : 'Start rotation';
   }
 
   // The device cycles the gallery on its own timer while auto-advance is
@@ -588,9 +595,9 @@
   // negligible on a LAN.
   var galleryPollTimer = null;
   function updateGalleryPolling() {
-    if (galleryAuto.checked && !galleryPollTimer) {
+    if (galleryAutoRunning && !galleryPollTimer) {
       galleryPollTimer = setInterval(function () { refreshCanvasPreview().catch(function () {}); }, 2000);
-    } else if (!galleryAuto.checked && galleryPollTimer) {
+    } else if (!galleryAutoRunning && galleryPollTimer) {
       clearInterval(galleryPollTimer);
       galleryPollTimer = null;
     }
@@ -602,10 +609,19 @@
     var v = galleryIntervalNum.value;
     if (v !== '') { galleryInterval.value = v; }
   });
-  galleryAuto.addEventListener('change', function () {
-    updateGalleryPolling();
-    sendGalleryMode().catch(function () {});
+
+  galleryAutoBtn.addEventListener('click', function () {
+    galleryAutoBtn.disabled = true;
+    galleryAutoRunning = !galleryAutoRunning;
+    sendGalleryMode()
+      .catch(function () {})
+      .finally(function () {
+        setGalleryAutoButtonText();
+        updateGalleryPolling();
+        galleryAutoBtn.disabled = false;
+      });
   });
+
   galleryInterval.addEventListener('change', function () { sendGalleryMode().catch(function () {}); });
   galleryIntervalNum.addEventListener('change', function () {
     var v = Math.max(5, Math.min(300, parseInt(galleryIntervalNum.value, 10) || 5));
@@ -616,7 +632,8 @@
 
   refreshGalleryList();
   fetch('/api/gallery/mode').then(function (r) { return r.json(); }).then(function (s) {
-    galleryAuto.checked = !!s.auto_advance;
+    galleryAutoRunning = !!s.auto_advance;
+    setGalleryAutoButtonText();
     updateGalleryPolling();
     galleryInterval.value = s.interval_seconds;
     galleryIntervalNum.value = s.interval_seconds;
