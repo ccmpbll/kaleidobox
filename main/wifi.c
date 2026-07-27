@@ -79,12 +79,24 @@ static void start_mdns(void) {
 // already caught once with kaleidoscope_stop() overwriting the panel
 // unexpectedly.
 static void show_ip_on_matrix(const esp_ip4_addr_t *ip) {
-  char line1[16], line2[16];
-  snprintf(line1, sizeof(line1), "%u.%u", esp_ip4_addr1_16(ip), esp_ip4_addr2_16(ip));
-  snprintf(line2, sizeof(line2), "%u.%u", esp_ip4_addr3_16(ip), esp_ip4_addr4_16(ip));
+  char full[16], line1[16], line2[16];
+  snprintf(full, sizeof(full), "%u.%u.%u.%u", esp_ip4_addr1_16(ip),
+          esp_ip4_addr2_16(ip), esp_ip4_addr3_16(ip), esp_ip4_addr4_16(ip));
   kaleidobox_matrix_clear();
-  kaleidobox_font_draw_text(0, 0, line1, 0, 200, 255);
-  kaleidobox_font_draw_text(0, 10, line2, 0, 200, 255);
+
+  // Most real LAN IPs (up to 12-13 chars, e.g. "10.42.11.140") fit on one
+  // line once letter-spacing tightens - only fall back to splitting by
+  // octet pairs for genuinely long ones (up to "255.255.255.255", 15
+  // chars, which can't fit on one line at any legible size with this
+  // font). Single line first since a 4-way octet split is uglier than
+  // it needs to be for the common case.
+  if (!kaleidobox_font_draw_text_fit(28, full, 0, 200, 255)) { // (64-7)/2
+    snprintf(line1, sizeof(line1), "%u.%u", esp_ip4_addr1_16(ip), esp_ip4_addr2_16(ip));
+    snprintf(line2, sizeof(line2), "%u.%u", esp_ip4_addr3_16(ip), esp_ip4_addr4_16(ip));
+    // Two 7px-tall lines with a 2px gap = 16px block, centered vertically.
+    kaleidobox_font_draw_text_centered(24, line1, 0, 200, 255);
+    kaleidobox_font_draw_text_centered(33, line2, 0, 200, 255);
+  }
 }
 
 static void event_handler(void *arg, esp_event_base_t event_base,
@@ -184,7 +196,7 @@ void wifi_task_run(void *pvParameters) {
   // (this function runs once) - panel's still blank at this point, same
   // reasoning as show_ip_on_matrix().
   kaleidobox_matrix_clear();
-  kaleidobox_font_draw_text(0, 0, "Connecting", 0, 200, 255);
+  kaleidobox_font_draw_text_centered(28, "Connecting", 0, 200, 255); // (64-7)/2, single centered line
 
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
   ESP_ERROR_CHECK(esp_wifi_start());

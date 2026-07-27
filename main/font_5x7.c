@@ -141,8 +141,8 @@ static const uint8_t *glyph_ptr(char c) {
   return &glyph_bitmap[offset];
 }
 
-void kaleidobox_font_draw_text(int x, int y, const char *text, uint8_t r,
-                               uint8_t g, uint8_t b) {
+static void draw_text_ex(int x, int y, const char *text, uint8_t r, uint8_t g,
+                         uint8_t b, int advance) {
   for (const char *p = text; *p; p++) {
     const uint8_t *glyph = glyph_ptr(*p);
     if (glyph) {
@@ -158,6 +158,42 @@ void kaleidobox_font_draw_text(int x, int y, const char *text, uint8_t r,
         }
       }
     }
-    x += 6; // 5px glyph + 1px spacing
+    x += advance;
   }
+}
+
+static int text_width(const char *text, int advance) {
+  int len = 0;
+  for (const char *p = text; *p; p++) {
+    len++;
+  }
+  // last glyph only needs its 5px, not the trailing advance gap after it
+  return len > 0 ? len * advance - (advance - 5) : 0;
+}
+
+void kaleidobox_font_draw_text(int x, int y, const char *text, uint8_t r,
+                               uint8_t g, uint8_t b) {
+  draw_text_ex(x, y, text, r, g, b, 6); // 5px glyph + 1px spacing
+}
+
+void kaleidobox_font_draw_text_centered(int y, const char *text, uint8_t r,
+                                        uint8_t g, uint8_t b) {
+  draw_text_ex((64 - text_width(text, 6)) / 2, y, text, r, g, b, 6);
+}
+
+bool kaleidobox_font_draw_text_fit(int y, const char *text, uint8_t r,
+                                   uint8_t g, uint8_t b) {
+  // Prefer normal 1px-spaced width; if that doesn't fit, tighten to
+  // glyphs touching (5px advance, 0 gap) before giving up - the gap is
+  // a legibility nicety, not load-bearing, and losing it still reads
+  // fine for short strings like an IP address.
+  if (text_width(text, 6) <= 64) {
+    draw_text_ex((64 - text_width(text, 6)) / 2, y, text, r, g, b, 6);
+    return true;
+  }
+  if (text_width(text, 5) <= 64) {
+    draw_text_ex((64 - text_width(text, 5)) / 2, y, text, r, g, b, 5);
+    return true;
+  }
+  return false; // doesn't fit even packed tight - caller should fall back
 }
