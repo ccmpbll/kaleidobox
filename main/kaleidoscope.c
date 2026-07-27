@@ -138,8 +138,22 @@ static void kaleidoscope_task(void *arg) {
     render_frame(frame, rotation_offset, zoom_scale);
     kaleidobox_matrix_draw_rgb888(frame, CANVAS_WIDTH, CANVAS_HEIGHT);
 
+    // Wrapped, not left to grow forever - sinf/cosf(zoom_phase) is the
+    // only place zoom_phase is used, rotation_offset only ever feeds
+    // sample_angle before being passed to cosf/sinf too, and both are
+    // periodic in 2*PI, so wrapping changes nothing about the output.
+    // Real suspect for the reported "gets slow after running a while,
+    // fixed by stop/start" - these grew completely unbounded before,
+    // and stop/start resets a fresh kaleidoscope_task with both back
+    // at 0.0f, which fits that exact symptom.
     rotation_offset += ROTATION_STEP;
+    if (rotation_offset >= 2.0f * (float)M_PI) {
+      rotation_offset -= 2.0f * (float)M_PI;
+    }
     zoom_phase += ZOOM_STEP;
+    if (zoom_phase >= 2.0f * (float)M_PI) {
+      zoom_phase -= 2.0f * (float)M_PI;
+    }
 
     vTaskDelay(pdMS_TO_TICKS(FRAME_INTERVAL_MS));
   }
