@@ -3,7 +3,9 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
+#include "font_5x7.h"
 #include "http_server.h"
+#include "matrix.h"
 #include "mdns.h"
 #include "wifi_ap.h"
 #include <stdio.h>
@@ -68,6 +70,23 @@ static void start_mdns(void) {
   ESP_LOGI(TAG, "mDNS started - reachable at http://%s.local", hostname);
 }
 
+// Only ever called during the initial boot-time connection window (see
+// call sites below) - the matrix runs single-buffered, so drawing here
+// writes straight to the panel, bypassing canvas.c entirely. Fine at
+// boot (panel starts blank, nothing to clobber), but must never run
+// again on a later mid-session reconnect once the user has actual
+// content (drawn/uploaded/kaleidoscope) on screen - same class of bug
+// already caught once with kaleidoscope_stop() overwriting the panel
+// unexpectedly.
+static void show_ip_on_matrix(const esp_ip4_addr_t *ip) {
+  char line1[16], line2[16];
+  snprintf(line1, sizeof(line1), "%u.%u", esp_ip4_addr1_16(ip), esp_ip4_addr2_16(ip));
+  snprintf(line2, sizeof(line2), "%u.%u", esp_ip4_addr3_16(ip), esp_ip4_addr4_16(ip));
+  kaleidobox_matrix_clear();
+  kaleidobox_font_draw_text(0, 0, line1, 0, 200, 255);
+  kaleidobox_font_draw_text(0, 10, line2, 0, 200, 255);
+}
+
 static void event_handler(void *arg, esp_event_base_t event_base,
                           int32_t event_id, void *event_data) {
   // Avoid any esp_wifi_*() calls directly here - done in the WiFi task,
@@ -88,9 +107,15 @@ static void event_handler(void *arg, esp_event_base_t event_base,
     switch (event_id) {
     case IP_EVENT_STA_GOT_IP: {
       ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
+      bool first_connect = !wifi_ever_had_ip;
       wifi_ever_had_ip = true;
       ESP_LOGI(TAG, "Connected with IP Address:" IPSTR,
                IP2STR(&event->ip_info.ip));
+      // Only the very first connect, same reasoning as show_ip_on_matrix's
+      // comment - a later reconnect must not clobber real panel content.
+      if (first_connect) {
+        show_ip_on_matrix(&event->ip_info.ip);
+      }
       start_mdns();
       // Idempotent - only starts the HTTP server on first IP.
       kaleidobox_http_server_start();
@@ -155,7 +180,12 @@ void wifi_task_run(void *pvParameters) {
     return; // unreachable - enter_ap_mode blocks until reboot
   }
 
-  // Credentials exist: start STA and attempt to connect.
+  // Credentials exist: start STA and attempt to connect. Boot-time only
+  // (this function runs once) - panel's still blank at this point, same
+  // reasoning as show_ip_on_matrix().
+  kaleidobox_matrix_clear();
+  kaleidobox_font_draw_text(0, 0, "Connecting", 0, 200, 255);
+
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
   ESP_ERROR_CHECK(esp_wifi_start());
   // Mains-powered device, not battery - no reason to trade connection

@@ -14,6 +14,7 @@ idf_component_register(
     "kaleidoscope.c"
     "sdcard.c"
     "gallery.c"
+    "font_5x7.c"
   INCLUDE_DIRS
     "."
   EMBED_TXTFILES
