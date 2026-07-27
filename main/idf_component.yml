@@ -9,5 +9,8 @@ dependencies:
   # layer needed (that was this scaffold's first-pass assumption, now
   # corrected). Not yet actually used by anything but matrix.cpp's stub.
   esphome/esp-hub75: "^0.3.5"
-  # esp_jpeg for JPEG decode (main/image_decode.c) - not yet wired up.
+  # esp_jpeg for JPEG decode (main/image_decode.c). PNG decode uses
+  # vendored main/lodepng.c/.h instead - no ESP-IDF component exists for
+  # PNG, and lodepng compiles as plain C (its optional C++ wrapper is
+  # gated behind __cplusplus/LODEPNG_COMPILE_CPP, unused here).
   espressif/esp_jpeg: "^1.0.0"

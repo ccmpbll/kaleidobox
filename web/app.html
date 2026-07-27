@@ -25,6 +25,9 @@
   button:active{opacity:.85;}
   button.secondary{background:rgb(230,226,222);color:rgb(41,41,41);}
   button:disabled{opacity:.5;cursor:default;}
+  #uploadLabel{padding:8px 14px;border-radius:6px;background:rgb(230,226,222);
+    color:rgb(41,41,41);font-size:.9rem;font-weight:600;cursor:pointer;}
+  #uploadLabel:active{opacity:.85;}
   #status{margin-top:16px;font-size:.8rem;color:rgb(130,120,110);}
 </style>
 </head>
@@ -37,6 +40,9 @@
   <label><input type="checkbox" id="instant" checked> Instant draw</label>
   <button type="button" class="secondary" id="clear">Clear</button>
   <button type="button" id="submit" hidden>Submit</button>
+  <label id="uploadLabel" for="upload">Upload picture
+    <input type="file" id="upload" accept="image/jpeg,image/png" style="display:none;">
+  </label>
 </div>
 <p id="status">Loading status&hellip;</p>
 <script>
@@ -178,6 +184,26 @@
           submitBtn.disabled = false;
           submitBtn.textContent = 'Submit';
         }, 1200);
+      });
+  });
+
+  var uploadInput = document.getElementById('upload');
+  var uploadLabel = document.getElementById('uploadLabel');
+  uploadInput.addEventListener('change', function () {
+    var file = uploadInput.files[0];
+    if (!file) {
+      return;
+    }
+    var original = uploadLabel.textContent;
+    uploadLabel.textContent = 'Uploading…';
+    fetch('/api/upload', {method: 'POST', body: file})
+      .then(function (r) {
+        uploadLabel.textContent = r.ok ? 'Uploaded!' : 'Failed - retry';
+      })
+      .catch(function () { uploadLabel.textContent = 'Failed - retry'; })
+      .finally(function () {
+        uploadInput.value = '';
+        setTimeout(function () { uploadLabel.textContent = original; }, 1500);
       });
   });
 

@@ -9,6 +9,7 @@ idf_component_register(
     "http_server.c"
     "matrix.cpp"
     "image_decode.c"
+    "lodepng.c"
     "canvas.c"
     "kaleidoscope.c"
     "sdcard.c"
@@ -28,6 +29,7 @@ idf_component_register(
     esp_wifi
     esp-tls
     esphome__esp-hub75
+    espressif__esp_jpeg
     fatfs
     json
     log

@@ -412,10 +412,62 @@ static esp_err_t canvas_submit_post_handler(httpd_req_t *req) {
 
 // --- Upload --------------------------------------------------------------
 
-// STUB - image_decode.c isn't implemented yet (see main/image_decode.c).
+// 8MB cap - generous for a phone photo (even at "original" quality) while
+// keeping worst-case upload buffer + decode buffer comfortably inside
+// 16MB PSRAM. Rejected outright at the content_len check below, before
+// any allocation.
+#define MAX_UPLOAD_BYTES (8 * 1024 * 1024)
+
 static esp_err_t upload_post_handler(httpd_req_t *req) {
-  httpd_resp_set_status(req, "501 Not Implemented");
-  httpd_resp_sendstr(req, "{\"error\":\"upload not yet implemented\"}");
+  if (req->content_len == 0 || req->content_len > MAX_UPLOAD_BYTES) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_sendstr(req, "{\"error\":\"missing or oversized body\"}");
+    return ESP_FAIL;
+  }
+
+  uint8_t *raw = malloc(req->content_len);
+  if (!raw) {
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+
+  size_t received = 0;
+  while (received < req->content_len) {
+    int r = httpd_req_recv(req, (char *)raw + received, req->content_len - received);
+    if (r <= 0) {
+      free(raw);
+      httpd_resp_send_500(req);
+      return ESP_FAIL;
+    }
+    received += r;
+  }
+
+  kaleidobox_image_t img = {0};
+  esp_err_t err = kaleidobox_image_decode(raw, req->content_len, &img);
+  free(raw);
+  if (err != ESP_OK) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_sendstr(req, "{\"error\":\"could not decode image - must be JPEG or PNG\"}");
+    return ESP_FAIL;
+  }
+
+  // Heap, not stack - CANVAS_WIDTH*CANVAS_HEIGHT*3 (12288 bytes) doesn't
+  // fit this handler's httpd task stack (8192 bytes total). Same class
+  // of bug already caught once in canvas_submit_post_handler - not
+  // repeating it here.
+  uint8_t *resized = malloc(CANVAS_WIDTH * CANVAS_HEIGHT * 3);
+  if (!resized) {
+    kaleidobox_image_free(&img);
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  kaleidobox_image_resize_to_canvas(&img, resized);
+  kaleidobox_image_free(&img);
+  kaleidobox_canvas_set_all(resized);
+  free(resized);
+
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_sendstr(req, "{\"ok\":true}");
   return ESP_OK;
 }
 
