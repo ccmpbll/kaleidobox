@@ -35,3 +35,8 @@ esp_err_t kaleidobox_nvs_set_gallery_interval_seconds(uint16_t seconds);
 // resume the animation across a reboot instead of coming back up static.
 bool kaleidobox_nvs_get_kaleido_running(void);
 esp_err_t kaleidobox_nvs_set_kaleido_running(bool running);
+
+// Panel brightness, 0-255 - see main/matrix.h. Applied at boot (main.c)
+// and on every change via the HTTP API.
+uint8_t kaleidobox_nvs_get_brightness(void);
+esp_err_t kaleidobox_nvs_set_brightness(uint8_t brightness);

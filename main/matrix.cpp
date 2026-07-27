@@ -100,3 +100,10 @@ extern "C" void kaleidobox_matrix_clear(void) {
   }
   driver->clear();
 }
+
+extern "C" void kaleidobox_matrix_set_brightness(uint8_t brightness) {
+  if (!driver) {
+    return;
+  }
+  driver->set_brightness(brightness);
+}

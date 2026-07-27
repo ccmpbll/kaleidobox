@@ -58,6 +58,11 @@ void kaleidobox_matrix_flip(void);
 
 void kaleidobox_matrix_clear(void);
 
+// 0-255. Takes effect on the next refresh cycle - no flip/redraw call
+// needed, even in this driver's single-buffered mode (confirmed
+// against esp-hub75's own hub75.h doc comment on set_brightness()).
+void kaleidobox_matrix_set_brightness(uint8_t brightness);
+
 #ifdef __cplusplus
 }
 #endif

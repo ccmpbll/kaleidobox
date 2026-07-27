@@ -79,6 +79,11 @@
   <label id="uploadLabel" class="uploadLabel" for="upload"><span id="uploadLabelText">Upload picture</span></label>
   <input type="file" id="upload" accept="image/jpeg,image/png" style="display:none;">
 </div>
+<h2>Display</h2>
+<div class="controls">
+  <label>Brightness <input type="range" id="brightness" min="1" max="255" value="128">
+    <input type="number" id="brightnessNum" min="1" max="255" value="128" style="width:56px;"></label>
+</div>
 <h2>Kaleidoscope</h2>
 <p class="sub">Animates whatever's currently on the panel (drawn or uploaded).</p>
 <div class="controls">
@@ -324,6 +329,41 @@
       });
   }
   refreshCanvasPreview().catch(function () {});
+
+  var brightness = document.getElementById('brightness');
+  var brightnessNum = document.getElementById('brightnessNum');
+
+  function sendBrightness(value) {
+    return fetch('/api/brightness', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({brightness: value}),
+    });
+  }
+
+  // Unlike kaleidoscope's settings (which need a full restart to take
+  // effect, so those wait for 'change'/mouse-up), a brightness change
+  // is a single cheap register write on the device - send it live on
+  // every 'input' tick so dragging the slider previews in real time.
+  brightness.addEventListener('input', function () {
+    brightnessNum.value = brightness.value;
+    sendBrightness(parseInt(brightness.value, 10)).catch(function () {});
+  });
+  brightnessNum.addEventListener('input', function () {
+    var v = brightnessNum.value;
+    if (v !== '') { brightness.value = v; }
+  });
+  brightnessNum.addEventListener('change', function () {
+    var v = Math.max(1, Math.min(255, parseInt(brightnessNum.value, 10) || 1));
+    brightnessNum.value = v;
+    brightness.value = v;
+    sendBrightness(v).catch(function () {});
+  });
+
+  fetch('/api/brightness').then(function (r) { return r.json(); }).then(function (s) {
+    brightness.value = s.brightness;
+    brightnessNum.value = s.brightness;
+  }).catch(function () {});
 
   var kaleidoToggle = document.getElementById('kaleidoToggle');
   var foldCount = document.getElementById('foldCount');

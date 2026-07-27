@@ -16,6 +16,7 @@
 #include "image_decode.h"
 #include "kaleidoscope.h"
 #include "log.h"
+#include "matrix.h"
 #include "ota.h"
 #include "sdcard.h"
 #include "settings.h"
@@ -647,6 +648,47 @@ static esp_err_t kaleidoscope_post_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
+// --- Brightness ------------------------------------------------------------
+
+static esp_err_t brightness_get_handler(httpd_req_t *req) {
+  cJSON *root = cJSON_CreateObject();
+  cJSON_AddNumberToObject(root, "brightness", kaleidobox_nvs_get_brightness());
+
+  char *json = cJSON_PrintUnformatted(root);
+  httpd_resp_set_type(req, "application/json");
+  esp_err_t res = httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
+  free(json);
+  cJSON_Delete(root);
+  return res;
+}
+
+static esp_err_t brightness_post_handler(httpd_req_t *req) {
+  char *body = NULL;
+  if (read_body(req, &body) != ESP_OK) {
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  cJSON *json = cJSON_Parse(body);
+  free(body);
+  if (!json) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_sendstr(req, "Invalid JSON");
+    return ESP_FAIL;
+  }
+
+  cJSON *item = cJSON_GetObjectItem(json, "brightness");
+  if (cJSON_IsNumber(item) && item->valueint >= 0 && item->valueint <= 255) {
+    uint8_t brightness = (uint8_t)item->valueint;
+    kaleidobox_nvs_set_brightness(brightness);
+    kaleidobox_matrix_set_brightness(brightness);
+  }
+  cJSON_Delete(json);
+
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_sendstr(req, "{\"ok\":true}");
+  return ESP_OK;
+}
+
 // --- Gallery ---------------------------------------------------------------
 // Handlers report 404/501 whenever gallery.c's own calls do (typically:
 // no TF card mounted, or - for next/prev - an empty gallery).
@@ -958,10 +1000,10 @@ esp_err_t kaleidobox_http_server_start(void) {
   config.stack_size = 8192;
   // Default max_uri_handlers is 8 - we register more than that (root,
   // status, logs, wifi, ota, ws/draw, canvas get/submit, upload,
-  // kaleidoscope x2, gallery x10). Past the cap,
+  // kaleidoscope x2, brightness x2, gallery x10). Past the cap,
   // httpd_register_uri_handler silently drops the excess - printspy-cam
   // hit this exact bug once already (see its http_server.c comment).
-  config.max_uri_handlers = 21;
+  config.max_uri_handlers = 23;
   config.max_open_sockets = LOG_WORKER_COUNT + 6;
   config.lru_purge_enable = true;
   // Same reasoning as printspy-cam: without TCP keepalive, a stale
@@ -1008,6 +1050,12 @@ esp_err_t kaleidobox_http_server_start(void) {
   httpd_uri_t kaleidoscope_post_uri = {.uri = "/api/kaleidoscope",
                                        .method = HTTP_POST,
                                        .handler = kaleidoscope_post_handler};
+  httpd_uri_t brightness_get_uri = {.uri = "/api/brightness",
+                                    .method = HTTP_GET,
+                                    .handler = brightness_get_handler};
+  httpd_uri_t brightness_post_uri = {.uri = "/api/brightness",
+                                     .method = HTTP_POST,
+                                     .handler = brightness_post_handler};
   httpd_uri_t gallery_get_uri = {
       .uri = "/api/gallery", .method = HTTP_GET, .handler = gallery_get_handler};
   httpd_uri_t gallery_save_uri = {.uri = "/api/gallery/save",
@@ -1049,6 +1097,8 @@ esp_err_t kaleidobox_http_server_start(void) {
   httpd_register_uri_handler(server, &upload_uri);
   httpd_register_uri_handler(server, &kaleidoscope_get_uri);
   httpd_register_uri_handler(server, &kaleidoscope_post_uri);
+  httpd_register_uri_handler(server, &brightness_get_uri);
+  httpd_register_uri_handler(server, &brightness_post_uri);
   httpd_register_uri_handler(server, &gallery_get_uri);
   httpd_register_uri_handler(server, &gallery_save_uri);
   httpd_register_uri_handler(server, &gallery_delete_uri);
