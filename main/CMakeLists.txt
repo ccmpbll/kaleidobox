@@ -1,0 +1,36 @@
+idf_component_register(
+  SRCS
+    "main.c"
+    "wifi.c"
+    "wifi_ap.c"
+    "settings.c"
+    "ota.c"
+    "log.c"
+    "http_server.c"
+    "matrix.cpp"
+    "image_decode.c"
+    "canvas.c"
+    "kaleidoscope.c"
+    "sdcard.c"
+    "gallery.c"
+  INCLUDE_DIRS
+    "."
+  EMBED_TXTFILES
+    "../web/app.html"
+  REQUIRES
+    app_update
+    bootloader_support
+    driver
+    esp_http_server
+    esp_netif
+    esp_partition
+    esp_timer
+    esp_wifi
+    esp-tls
+    fatfs
+    json
+    log
+    mdns
+    nvs_flash
+    sdmmc
+)

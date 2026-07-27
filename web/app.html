@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>KaleidoBox</title>
+<style>
+  /* Mobile-first shell - primary clients are an iPad and a phone, not
+     desktop. Full draw/upload/kaleidoscope/gallery UI is built out in a
+     later pass; this is a placeholder confirming the app loads and the
+     canvas element is touch-ready. */
+  body{margin:0;padding:16px;background:rgb(245,242,240);
+    color:rgb(41,41,41);font-family:-apple-system,BlinkMacSystemFont,
+    'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}
+  h1{font-size:1.2rem;font-weight:700;margin:0 0 4px;}
+  p.sub{margin:0 0 16px;color:rgb(130,120,110);font-size:.85rem;}
+  #canvas{display:block;width:100%;max-width:512px;aspect-ratio:1;
+    background:#000;border-radius:8px;touch-action:none;
+    image-rendering:pixelated;}
+  #status{margin-top:16px;font-size:.8rem;color:rgb(130,120,110);}
+</style>
+</head>
+<body>
+<h1>KaleidoBox</h1>
+<p class="sub">Draw, upload, or animate a kaleidoscope on the panel.</p>
+<canvas id="canvas" width="64" height="64"></canvas>
+<p id="status">Loading status&hellip;</p>
+<script>
+  // touch-action:none above stops the page from scrolling while drawing
+  // on the canvas - touch handlers themselves land here once the real
+  // draw mode is implemented.
+  fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
+    document.getElementById('status').textContent =
+      'KaleidoBox ' + s.version + ' - ' + (s.wifi_ssid || 'no wifi') +
+      ' - up ' + s.uptime_seconds + 's';
+  }).catch(function () {
+    document.getElementById('status').textContent = 'Status unavailable';
+  });
+</script>
+</body>
+</html>

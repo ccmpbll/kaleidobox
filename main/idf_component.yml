@@ -1,0 +1,12 @@
+dependencies:
+  idf: ">=5.3.0"
+  espressif/mdns: "^1.2.0"
+  # Matrix driver stack - isolated behind matrix.cpp's plain C API (see
+  # matrix.h). Not yet actually used by anything but matrix.cpp's stub;
+  # real wiring lands once board_pins.h is verified against hardware.
+  # TODO: confirm exact component names/versions once matrix.cpp's real
+  # implementation is written - these are the commonly-used registry
+  # entries as of this scaffold, not yet build-tested here.
+  espressif/arduino-esp32: "^3.0.0"
+  # esp_jpeg for JPEG decode (main/image_decode.c) - not yet wired up.
+  espressif/esp_jpeg: "^1.0.0"

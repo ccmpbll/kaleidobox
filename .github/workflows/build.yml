@@ -1,0 +1,35 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "main/**"
+      - "web/**"
+      - "sdkconfig.defaults*"
+      - "partitions-*.csv"
+      - "CMakeLists.txt"
+      - ".github/workflows/build.yml"
+  pull_request:
+    paths:
+      - "main/**"
+      - "web/**"
+      - "sdkconfig.defaults*"
+      - "partitions-*.csv"
+      - "CMakeLists.txt"
+      - ".github/workflows/build.yml"
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.3.4
+          target: esp32s3
+          command: idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.esp32s3" build

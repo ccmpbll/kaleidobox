@@ -1,0 +1,12 @@
+# Waveshare ESP32-S3-RGB-Matrix: ESP32-S3-N32R16 - 32MB flash, 16MB PSRAM.
+# partitions-8m.csv only uses 8MB of the 32MB available, same as
+# printspy-cam's Freenove board (16MB flash, same 8m partition table) -
+# plenty of headroom, not the under-sizing bug nulllab hit (that was
+# declaring MORE flash than physically present, not less).
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions-8m.csv"
+CONFIG_SPIRAM=y
+# TODO: confirm octal vs quad PSRAM mode against Waveshare's actual module
+# datasheet before real hardware bring-up - assumed octal (same as
+# Freenove's ESP32-S3-WROOM-1 module) but not yet verified for this board.
+CONFIG_SPIRAM_MODE_OCT=y

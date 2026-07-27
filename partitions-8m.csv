@@ -1,0 +1,7 @@
+# ESP-IDF Partition Table - 8MB layout (board has 32MB flash, this leaves
+# the rest unused for now - see sdkconfig.defaults.esp32s3).
+# Name,   Type, SubType, Offset,  Size, Flags
+nvs,      data, nvs,     0x9000,  0x4000,
+otadata,  data, ota,     0xd000,  0x2000,
+ota_0,    app,  ota_0,   0x10000, 0x300000,
+ota_1,    app,  ota_1,   0x310000,0x300000,

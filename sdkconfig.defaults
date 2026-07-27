@@ -1,0 +1,18 @@
+# Reduce binary size
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+CONFIG_NEWLIB_NANO_FORMAT=y
+
+# Left at INFO (the ESP-IDF default) rather than WARN - printspy-cam learned
+# the hard way that suppressing INFO blinds you to your own ESP_LOGI calls
+# (WiFi connect attempts, success/failure, AP start) during real bring-up
+# bugs. Revisit once things are actually working and binary size matters
+# more than visibility.
+
+# Required for AP-mode WiFi provisioning - off by default in ESP-IDF
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
+
+# Browsers open several parallel connections to the setup/admin page; the
+# draw-mode WebSocket and gallery/log SSE streams each hold one open too.
+# Default (10) can starve requests under real use - same reasoning as
+# printspy-cam.
+CONFIG_LWIP_MAX_SOCKETS=16
