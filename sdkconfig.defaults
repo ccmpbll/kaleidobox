@@ -44,3 +44,13 @@ CONFIG_LWIP_TCP_WND_DEFAULT=65535
 CONFIG_LWIP_TCP_SND_BUF_DEFAULT=65535
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=32
 CONFIG_LWIP_TCP_SNDMBOX_SIZE=32
+
+# Default FATFS config (CONFIG_FATFS_LFN_NONE) is 8.3 short names only -
+# confirmed on real hardware: gallery.c saved a file as "red.raw" and it
+# came back as "RED.RAW" on disk. Not just cosmetic - 8.3 also caps the
+# name part at 8 characters, so any gallery save name longer than that
+# would get silently mangled (e.g. "SUNSET~1.RAW"), breaking delete/
+# lookup by the name the user actually typed. Heap (not stack) variant -
+# LFN work buffers are only allocated transiently per file op, and this
+# board has PSRAM headroom to spare.
+CONFIG_FATFS_LFN_HEAP=y

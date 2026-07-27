@@ -10,6 +10,7 @@ static const char *NVS_ID_MOTION_ZOOM = "motion_zoom";
 static const char *NVS_ID_INSTANT_DRAW = "instant_draw";
 static const char *NVS_ID_GALLERY_AUTO = "gallery_auto";
 static const char *NVS_ID_GALLERY_INTERVAL = "gallery_ival";
+static const char *NVS_ID_KALEIDO_RUNNING = "kaleido_run";
 
 // Defaults chosen so a freshly-flashed device (before any setting has
 // ever been written) behaves sensibly rather than at the extremes of
@@ -22,6 +23,7 @@ static uint8_t motion_zoom_val = 0;
 static uint8_t instant_draw_val = 0;
 static uint8_t gallery_auto_val = 1;
 static uint16_t gallery_interval_val = DEFAULT_GALLERY_INTERVAL_SECONDS;
+static uint8_t kaleido_running_val = 0;
 
 #define LOAD_NVS_SCALAR(nvs_get_fn, key, dest)                              \
   do {                                                                       \
@@ -56,6 +58,7 @@ esp_err_t kaleidobox_nvs_init(void) {
   LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_INSTANT_DRAW, instant_draw_val);
   LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_GALLERY_AUTO, gallery_auto_val);
   LOAD_NVS_SCALAR(nvs_get_u16, NVS_ID_GALLERY_INTERVAL, gallery_interval_val);
+  LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_KALEIDO_RUNNING, kaleido_running_val);
 
   nvs_close(handle);
 
@@ -88,4 +91,10 @@ esp_err_t kaleidobox_nvs_set_gallery_auto_advance(bool enable) {
 uint16_t kaleidobox_nvs_get_gallery_interval_seconds(void) { return gallery_interval_val; }
 esp_err_t kaleidobox_nvs_set_gallery_interval_seconds(uint16_t seconds) {
   SCALAR_SETTER(nvs_set_u16, NVS_ID_GALLERY_INTERVAL, gallery_interval_val, seconds)
+}
+
+bool kaleidobox_nvs_get_kaleido_running(void) { return kaleido_running_val != 0; }
+esp_err_t kaleidobox_nvs_set_kaleido_running(bool running) {
+  uint8_t v = running ? 1 : 0;
+  SCALAR_SETTER(nvs_set_u8, NVS_ID_KALEIDO_RUNNING, kaleido_running_val, v)
 }

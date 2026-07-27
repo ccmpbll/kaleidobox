@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esp_err.h"
+#include <stdbool.h>
 #include <stdint.h>
 
 // The live draw-mode pixel buffer (64x64 RGB888). Mutated either from
@@ -29,3 +30,10 @@ void kaleidobox_canvas_set_all(const uint8_t *rgb888);
 // see matrix.cpp). Kept for kaleidoscope mode, which will re-enable
 // double buffering and need this. Not called anywhere in draw mode.
 void kaleidobox_canvas_flip(void);
+
+// Test-and-clear: true if the buffer changed since the last call,
+// false (and clears back to false) otherwise. Consumed by gallery.c's
+// background task to autosave the buffer to the TF card only when it's
+// actually changed, so a reboot can restore whatever was last showing
+// instead of coming back up blank.
+bool kaleidobox_canvas_take_dirty(void);

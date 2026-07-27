@@ -23,6 +23,7 @@ idf_component_register(
     app_update
     bootloader_support
     driver
+    esp_driver_sdmmc
     esp_http_server
     esp_netif
     esp_partition

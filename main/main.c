@@ -1,6 +1,7 @@
 #include "canvas.h"
 #include "esp_log.h"
 #include "gallery.h"
+#include "image_decode.h"
 #include "kaleidoscope.h"
 #include "log.h"
 #include "matrix.h"
@@ -46,6 +47,24 @@ void app_main(void) {
   // until sdcard.c is actually implemented.
   kaleidobox_sdcard_init();
   ESP_ERROR_CHECK(kaleidobox_gallery_init());
+
+  // Restore whatever was on the panel before the last reboot (canvas
+  // content autosaved by gallery.c's background task) - a no-op if no
+  // card is mounted or nothing's been saved yet, leaving the blank
+  // canvas from kaleidobox_canvas_init() above untouched.
+  kaleidobox_gallery_restore_state();
+
+  // Resume kaleidoscope if it was running when the device last stopped
+  // - reads whatever kaleidobox_gallery_restore_state() just loaded (or
+  // the blank canvas, if it didn't).
+  if (kaleidobox_nvs_get_kaleido_running()) {
+    kaleidobox_image_t source = {
+        .rgb888 = (uint8_t *)kaleidobox_canvas_buffer(),
+        .width = CANVAS_WIDTH,
+        .height = CANVAS_HEIGHT,
+    };
+    kaleidobox_kaleidoscope_start(&source);
+  }
 
   // WiFi runs as its own task - AP fallback mode blocks forever until the
   // device reboots, so it can't live on app_main's own stack/task.

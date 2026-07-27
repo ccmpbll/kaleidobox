@@ -29,3 +29,9 @@ esp_err_t kaleidobox_nvs_set_gallery_auto_advance(bool enable);
 
 uint16_t kaleidobox_nvs_get_gallery_interval_seconds(void);
 esp_err_t kaleidobox_nvs_set_gallery_interval_seconds(uint16_t seconds);
+
+// Whether kaleidoscope was running at last stop/start - kaleidoscope.c
+// sets this on every start()/stop() call. Read at boot (see main.c) to
+// resume the animation across a reboot instead of coming back up static.
+bool kaleidobox_nvs_get_kaleido_running(void);
+esp_err_t kaleidobox_nvs_set_kaleido_running(bool running);

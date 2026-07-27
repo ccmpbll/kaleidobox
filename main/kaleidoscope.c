@@ -183,6 +183,8 @@ esp_err_t kaleidobox_kaleidoscope_start(const kaleidobox_image_t *source) {
     return ESP_ERR_NO_MEM;
   }
 
+  kaleidobox_nvs_set_kaleido_running(true);
+
   ESP_LOGI(TAG, "kaleidoscope started (%ux%u source, fold=%u)", source->width,
           source->height, kaleidobox_nvs_get_fold_count());
   return ESP_OK;
@@ -203,6 +205,7 @@ void kaleidobox_kaleidoscope_stop(void) {
   // to the original image instead of freezing on the last animated
   // frame.
   kaleidobox_canvas_set_all(kaleidobox_canvas_buffer());
+  kaleidobox_nvs_set_kaleido_running(false);
 }
 
 bool kaleidobox_kaleidoscope_is_running(void) { return g_task != NULL; }

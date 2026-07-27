@@ -595,9 +595,8 @@ static esp_err_t kaleidoscope_post_handler(httpd_req_t *req) {
 }
 
 // --- Gallery ---------------------------------------------------------------
-// STUB - sdcard.c/gallery.c aren't implemented yet. These wire the real
-// HTTP surface up now so the web app can be built against a stable API,
-// but every handler reports 501 until the TF card is actually mounted.
+// Handlers report 404/501 whenever gallery.c's own calls do (typically:
+// no TF card mounted, or - for next/prev - an empty gallery).
 
 static esp_err_t gallery_get_handler(httpd_req_t *req) {
   char names[512];
@@ -641,9 +640,13 @@ static esp_err_t gallery_save_post_handler(httpd_req_t *req) {
     cJSON_Delete(json);
   }
 
-  if (err != ESP_OK) {
+  if (err == ESP_ERR_INVALID_ARG) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_sendstr(req, "{\"error\":\"missing or invalid name\"}");
+    return ESP_OK;
+  } else if (err != ESP_OK) {
     httpd_resp_set_status(req, "501 Not Implemented");
-    httpd_resp_sendstr(req, "{\"error\":\"gallery not yet implemented\"}");
+    httpd_resp_sendstr(req, "{\"error\":\"no TF card mounted\"}");
     return ESP_OK;
   }
   httpd_resp_set_type(req, "application/json");
@@ -652,11 +655,43 @@ static esp_err_t gallery_save_post_handler(httpd_req_t *req) {
 }
 
 static esp_err_t gallery_delete_handler(httpd_req_t *req) {
-  // Name comes from the URI tail (/api/gallery/<name>) - not yet parsed
-  // since gallery.c has nothing to delete against.
-  httpd_resp_set_status(req, "501 Not Implemented");
-  httpd_resp_sendstr(req, "{\"error\":\"gallery not yet implemented\"}");
+  static const char *prefix = "/api/gallery/";
+  size_t prefix_len = strlen(prefix);
+  if (strncmp(req->uri, prefix, prefix_len) != 0) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_sendstr(req, "{\"error\":\"missing name\"}");
+    return ESP_OK;
+  }
+  // req->uri is just the path here (no query string on this route in
+  // practice) - name runs to the end of the string.
+  const char *name = req->uri + prefix_len;
+
+  esp_err_t err = kaleidobox_gallery_delete(name);
+  if (err == ESP_ERR_INVALID_ARG) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_sendstr(req, "{\"error\":\"invalid name\"}");
+    return ESP_OK;
+  } else if (err != ESP_OK) {
+    httpd_resp_set_status(req, "404 Not Found");
+    httpd_resp_sendstr(req, "{\"error\":\"not found\"}");
+    return ESP_OK;
+  }
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_sendstr(req, "{\"ok\":true}");
   return ESP_OK;
+}
+
+static esp_err_t gallery_mode_get_handler(httpd_req_t *req) {
+  cJSON *root = cJSON_CreateObject();
+  cJSON_AddBoolToObject(root, "auto_advance", kaleidobox_nvs_get_gallery_auto_advance());
+  cJSON_AddNumberToObject(root, "interval_seconds",
+                          kaleidobox_nvs_get_gallery_interval_seconds());
+  char *json = cJSON_PrintUnformatted(root);
+  httpd_resp_set_type(req, "application/json");
+  esp_err_t res = httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
+  free(json);
+  cJSON_Delete(root);
+  return res;
 }
 
 static esp_err_t gallery_mode_post_handler(httpd_req_t *req) {
@@ -691,8 +726,8 @@ static esp_err_t gallery_mode_post_handler(httpd_req_t *req) {
 static esp_err_t gallery_next_handler(httpd_req_t *req) {
   esp_err_t err = kaleidobox_gallery_next();
   if (err != ESP_OK) {
-    httpd_resp_set_status(req, "501 Not Implemented");
-    httpd_resp_sendstr(req, "{\"error\":\"gallery not yet implemented\"}");
+    httpd_resp_set_status(req, "404 Not Found");
+    httpd_resp_sendstr(req, "{\"error\":\"no TF card mounted or gallery empty\"}");
     return ESP_OK;
   }
   httpd_resp_set_type(req, "application/json");
@@ -703,8 +738,8 @@ static esp_err_t gallery_next_handler(httpd_req_t *req) {
 static esp_err_t gallery_prev_handler(httpd_req_t *req) {
   esp_err_t err = kaleidobox_gallery_prev();
   if (err != ESP_OK) {
-    httpd_resp_set_status(req, "501 Not Implemented");
-    httpd_resp_sendstr(req, "{\"error\":\"gallery not yet implemented\"}");
+    httpd_resp_set_status(req, "404 Not Found");
+    httpd_resp_sendstr(req, "{\"error\":\"no TF card mounted or gallery empty\"}");
     return ESP_OK;
   }
   httpd_resp_set_type(req, "application/json");
@@ -726,10 +761,10 @@ esp_err_t kaleidobox_http_server_start(void) {
   config.stack_size = 8192;
   // Default max_uri_handlers is 8 - we register more than that (root,
   // status, logs, wifi, ota, ws/draw, canvas get/submit, upload,
-  // kaleidoscope x2, gallery x6). Past the cap,
+  // kaleidoscope x2, gallery x7). Past the cap,
   // httpd_register_uri_handler silently drops the excess - printspy-cam
   // hit this exact bug once already (see its http_server.c comment).
-  config.max_uri_handlers = 17;
+  config.max_uri_handlers = 18;
   config.max_open_sockets = LOG_WORKER_COUNT + 6;
   config.lru_purge_enable = true;
   // Same reasoning as printspy-cam: without TCP keepalive, a stale
@@ -739,6 +774,10 @@ esp_err_t kaleidobox_http_server_start(void) {
   config.keep_alive_idle = 5;
   config.keep_alive_interval = 5;
   config.keep_alive_count = 3;
+  // DELETE /api/gallery/* registers a wildcard URI - without this, the
+  // default matcher is a plain strcmp and that route never matches
+  // anything.
+  config.uri_match_fn = httpd_uri_match_wildcard;
 
   esp_err_t err = httpd_start(&server, &config);
   if (err != ESP_OK) {
@@ -780,6 +819,9 @@ esp_err_t kaleidobox_http_server_start(void) {
   httpd_uri_t gallery_delete_uri = {.uri = "/api/gallery/*",
                                     .method = HTTP_DELETE,
                                     .handler = gallery_delete_handler};
+  httpd_uri_t gallery_mode_get_uri = {.uri = "/api/gallery/mode",
+                                      .method = HTTP_GET,
+                                      .handler = gallery_mode_get_handler};
   httpd_uri_t gallery_mode_uri = {.uri = "/api/gallery/mode",
                                   .method = HTTP_POST,
                                   .handler = gallery_mode_post_handler};
@@ -804,6 +846,7 @@ esp_err_t kaleidobox_http_server_start(void) {
   httpd_register_uri_handler(server, &gallery_get_uri);
   httpd_register_uri_handler(server, &gallery_save_uri);
   httpd_register_uri_handler(server, &gallery_delete_uri);
+  httpd_register_uri_handler(server, &gallery_mode_get_uri);
   httpd_register_uri_handler(server, &gallery_mode_uri);
   httpd_register_uri_handler(server, &gallery_next_uri);
   httpd_register_uri_handler(server, &gallery_prev_uri);
