@@ -155,8 +155,15 @@ esp_err_t kaleidobox_gallery_init(void) {
   if (kaleidobox_sdcard_is_mounted()) {
     mkdir(GALLERY_DIR, 0777); // ignore EEXIST - already there is fine
   }
-  xTaskCreate(gallery_bg_task, "gallery_bg", 4096, NULL, tskIDLE_PRIORITY + 1,
-             NULL);
+  // Pinned to core 1, opposite WiFi's own tasks (core 0, per the boot
+  // log's "wifi driver task: ..., core=0") - confirmed on real hardware
+  // that SD card I/O from this task (the autosave write, or an
+  // auto-advance directory scan) landing on the same core as WiFi's
+  // processing tanks in-flight upload throughput ~10-17x (627KB went
+  // from ~500ms to 7-13s). Unpinned, the scheduler was free to put this
+  // task on core 0 too.
+  xTaskCreatePinnedToCore(gallery_bg_task, "gallery_bg", 4096, NULL,
+                          tskIDLE_PRIORITY + 1, NULL, 1);
   ESP_LOGI(TAG, "gallery_init");
   return ESP_OK;
 }
