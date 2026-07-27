@@ -48,11 +48,26 @@ static void precompute_pixel_tables(uint8_t fold_count) {
       // every other copy so adjacent wedges reflect instead of repeat
       // identically. That reflection is what makes it look like a
       // kaleidoscope instead of just a spinning pie-slice duplicate.
+      //
+      // Center (cx,cy) is a half-integer (31.5) for an even-width
+      // canvas, so no pixel ever sits exactly on a horizontal/vertical
+      // boundary - but the anti-diagonal (x+y=CANVAS_WIDTH-1) does land
+      // exactly on integer pixel centers, at angle exactly ±45°/135°.
+      // When wedge is a divisor of 45° (fold_count a multiple of 8),
+      // that entire line of pixels sits exactly ON a wedge boundary,
+      // and independent per-pixel float noise in angle/wedge can push
+      // floorf() to a different integer for neighboring pixels that
+      // are mathematically supposed to agree - flipping mirror parity
+      // inconsistently along that one line. Confirmed on real hardware
+      // (a static-looking diagonal seam, only at fold counts that are
+      // multiples of 8) before this fix, not theoretical. The epsilon
+      // nudge below consistently resolves boundary-exact values to the
+      // same side instead of leaving it to whichever way the noise fell.
       float a = fmodf(angle, wedge);
       if (a < 0) {
         a += wedge;
       }
-      long copy_index = lroundf(floorf(angle / wedge));
+      long copy_index = (long)floorf(angle / wedge + 1e-4f);
       if (copy_index % 2 != 0) {
         a = wedge - a;
       }
