@@ -12,6 +12,32 @@
 
 static const char *TAG = "kaleidobox";
 
+// TEMPORARY - visual bring-up check only, remove once draw mode exists.
+// Same idea as esp-hub75's own simple_colors example: colored squares in
+// each corner + a center cross, so pin mapping/color order can be
+// confirmed by eye (right color in the right corner) before building
+// anything on top of the matrix driver.
+static void draw_test_pattern(void) {
+  const uint8_t sq = 8;
+
+  for (uint8_t y = 0; y < sq; y++) {
+    for (uint8_t x = 0; x < sq; x++) {
+      kaleidobox_matrix_set_pixel(x, y, 255, 0, 0); // top-left: red
+      kaleidobox_matrix_set_pixel(63 - x, y, 0, 255, 0); // top-right: green
+      kaleidobox_matrix_set_pixel(x, 63 - y, 0, 0, 255); // bottom-left: blue
+      kaleidobox_matrix_set_pixel(63 - x, 63 - y, 255, 255, 255); // bottom-right: white
+    }
+  }
+
+  for (uint8_t i = 22; i <= 42; i++) {
+    kaleidobox_matrix_set_pixel(i, 32, 0, 255, 255); // horizontal cyan line
+    kaleidobox_matrix_set_pixel(32, i, 0, 255, 255); // vertical cyan line
+  }
+
+  kaleidobox_matrix_flip();
+  ESP_LOGI(TAG, "test pattern drawn: red/green/blue/white corners, cyan cross");
+}
+
 void app_main(void) {
   // First, so the live log console can show everything from boot onward.
   kaleidobox_log_init();
@@ -27,6 +53,7 @@ void app_main(void) {
   ESP_ERROR_CHECK(kaleidobox_nvs_init());
 
   ESP_ERROR_CHECK(kaleidobox_matrix_init());
+  draw_test_pattern();
   ESP_ERROR_CHECK(kaleidobox_canvas_init());
   ESP_ERROR_CHECK(kaleidobox_kaleidoscope_init());
   // Not fatal if the card isn't present/mounted yet - gallery features
