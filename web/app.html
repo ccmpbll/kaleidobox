@@ -236,6 +236,12 @@
     buffer.fill(0);
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, W, H);
+    // Tap-to-load pre-fills this with the loaded entry's name so
+    // re-saving overwrites it (see gallery tap-to-show) - if that
+    // name's still sitting there after a Clear, hitting "Save current"
+    // would blank out that real gallery entry. Clearing the canvas
+    // clears the intent to overwrite anything.
+    gallerySaveName.value = '';
     // Stop a running kaleidoscope first, and wait for it, before pushing
     // the clear - otherwise kaleidoscope_stop()'s own "restore the
     // original image" behavior can land after our clear and undo it.
