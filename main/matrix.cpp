@@ -2,12 +2,15 @@
 
 #include "esp_log.h"
 
-// TODO: real implementation - construct a MatrixPanel_I2S_DMA instance
-// from board_pins.h's MATRIX_PIN_* map, call begin(), and implement
-// set_pixel/flip/clear against it. Left as a log-only stub until pins are
-// verified against real hardware (see board_pins.h) and the
-// arduino-esp32/Adafruit_GFX/ESP32-HUB75-MatrixPanel-I2S-DMA component
-// deps are actually pulled in via idf_component.yml.
+// TODO: real implementation - construct a Hub75Driver (esphome/esp-hub75)
+// from board_pins.h's MATRIX_PIN_* map (pins verified against Waveshare's
+// official example - see board_pins.h), call begin(), and implement
+// set_pixel/flip/clear against it (see hub75_bridge.cpp in
+// waveshareteam/ESP32-S3-RGB-Matrix's idf_v5.5.2 example for the
+// reference shape: Hub75Config/Hub75Pins -> new Hub75Driver(cfg) ->
+// draw_pixels()/flip_buffer()/set_brightness()). Left as a log-only stub
+// until the esp-hub75 component dep is actually pulled in via
+// idf_component.yml and build-tested.
 
 static const char *TAG = "matrix";
 

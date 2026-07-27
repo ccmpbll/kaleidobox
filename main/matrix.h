@@ -9,16 +9,24 @@ extern "C" {
 #endif
 
 // C-callable wrapper around the HUB75 DMA driver. The driver itself
-// (ESP32-HUB75-MatrixPanel-I2S-DMA, via Adafruit_GFX) is C++ and built
-// against arduino-esp32 conventions - implementation lives in matrix.cpp,
-// pulled in as an ESP-IDF component (see main/idf_component.yml). Every
-// other module in this project talks to the matrix only through this
-// plain-C API, so the Arduino-compat dependency stays contained to one
-// file instead of leaking through the rest of the (otherwise pure
-// ESP-IDF) codebase.
+// (esphome/esp-hub75, pulled in as an ESP-IDF component - see
+// main/idf_component.yml) is C++; implementation lives in matrix.cpp.
+// Every other module in this project talks to the matrix only through
+// this plain-C API, so the C++ dependency stays contained to one file.
 //
-// STUB - matrix.cpp currently only logs; no panel output yet. Real driver
-// bring-up is blocked on verifying board_pins.h against actual hardware.
+// Correction from this scaffold's first pass: originally planned to pull
+// in arduino-esp32 + Adafruit_GFX + mrfaptastic's
+// ESP32-HUB75-MatrixPanel-I2S-DMA, since that's the usual path for this
+// kind of panel. Waveshare's own official ESP-IDF example for this exact
+// board (github.com/waveshareteam/ESP32-S3-RGB-Matrix,
+// example/idf_v5.5.2) uses esphome/esp-hub75 instead - a pure ESP-IDF
+// component, no Arduino compatibility layer needed at all. Their
+// hub75_bridge.cpp wraps it in almost exactly this same C-API pattern
+// (Hub75Driver class -> extern "C" functions), which is a good sign this
+// approach is sound for this board specifically.
+//
+// STUB - matrix.cpp currently only logs; no panel output yet. Pins are
+// verified (board_pins.h) but the esp-hub75 component isn't wired up.
 
 esp_err_t kaleidobox_matrix_init(void);
 

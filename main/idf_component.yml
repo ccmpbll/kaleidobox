@@ -2,11 +2,12 @@ dependencies:
   idf: ">=5.3.0"
   espressif/mdns: "^1.2.0"
   # Matrix driver stack - isolated behind matrix.cpp's plain C API (see
-  # matrix.h). Not yet actually used by anything but matrix.cpp's stub;
-  # real wiring lands once board_pins.h is verified against hardware.
-  # TODO: confirm exact component names/versions once matrix.cpp's real
-  # implementation is written - these are the commonly-used registry
-  # entries as of this scaffold, not yet build-tested here.
-  espressif/arduino-esp32: "^3.0.0"
+  # matrix.h). Confirmed via Waveshare's own official ESP-IDF example for
+  # this exact board (github.com/waveshareteam/ESP32-S3-RGB-Matrix,
+  # example/idf_v5.5.2/components/bsp/esp32_s3_matrix/idf_component.yml) -
+  # esp-hub75 is a pure ESP-IDF component, no Arduino/Adafruit_GFX compat
+  # layer needed (that was this scaffold's first-pass assumption, now
+  # corrected). Not yet actually used by anything but matrix.cpp's stub.
+  esphome/esp-hub75: "^0.3.5"
   # esp_jpeg for JPEG decode (main/image_decode.c) - not yet wired up.
   espressif/esp_jpeg: "^1.0.0"

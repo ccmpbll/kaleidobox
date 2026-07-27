@@ -3,13 +3,13 @@
 ESP32-S3 firmware driving a 64×64 HUB75 RGB LED matrix panel. Draw your own image or upload a picture from a phone/iPad, display it straight or as an animated kaleidoscope pattern, and save images to a TF card as a cycling gallery.
 
 - **Hardware:** Waveshare ESP32-S3-RGB-Matrix + Waveshare RGB-Matrix-P2-64x64
-- **Framework:** ESP-IDF, with the HUB75 matrix driver isolated in one component via `arduino-esp32` as an IDF component (see `main/matrix.cpp`) — everything else is plain ESP-IDF/C
+- **Framework:** Pure ESP-IDF, no Arduino. The HUB75 matrix driver is isolated in one component (`main/matrix.cpp`) wrapping `esphome/esp-hub75` — confirmed as the right dependency via Waveshare's own official ESP-IDF example for this board
 - **License:** MIT
 - **Versioning:** Date-based
 
 ## Status
 
-Scaffolding — buildable skeleton with WiFi provisioning, settings, OTA, and logging ported from [printspy-cam](https://github.com/ccmpbll/printspy-cam). Matrix driving, image decode, kaleidoscope rendering, and TF card gallery are stubbed pending real-hardware bring-up. See `notes/kaleidobox.md` in the parent workspace for full project notes and open questions.
+Scaffolding — buildable skeleton with WiFi provisioning, settings, OTA, and logging ported from [printspy-cam](https://github.com/ccmpbll/printspy-cam). HUB75/TF card pin mapping is confirmed against Waveshare's own official ESP-IDF example ([waveshareteam/ESP32-S3-RGB-Matrix](https://github.com/waveshareteam/ESP32-S3-RGB-Matrix)), but matrix driving, image decode, kaleidoscope rendering, and TF card gallery are all still stubbed pending real driver bring-up. See `notes/kaleidobox.md` in the parent workspace for full project notes and open questions.
 
 ## Building
 
@@ -28,8 +28,8 @@ kaleidobox/
 │   ├── wifi.c/.h, wifi_ap.c/.h      # WiFi provisioning (ported from printspy-cam)
 │   ├── settings.c/.h                # NVS-backed settings
 │   ├── ota.c/.h, log.c/.h           # OTA update, in-memory log ring buffer + SSE
-│   ├── board_pins.h                 # HUB75/TF card pin map - placeholder, needs schematic verification
-│   ├── matrix.h, matrix.cpp         # HUB75 DMA driver wrapper (C API over C++/Arduino-component lib)
+│   ├── board_pins.h                 # HUB75/TF card pin map - confirmed against Waveshare's official BSP
+│   ├── matrix.h, matrix.cpp         # HUB75 driver wrapper (C API over esphome/esp-hub75, no Arduino)
 │   ├── image_decode.c/.h            # JPEG/PNG decode, resize, dither
 │   ├── canvas.c/.h                  # Draw-mode pixel buffer
 │   ├── kaleidoscope.c/.h            # Polar-fold animation transform
