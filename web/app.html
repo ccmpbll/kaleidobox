@@ -57,7 +57,8 @@
 <p class="sub">Animates whatever's currently on the panel (drawn or uploaded).</p>
 <div class="controls">
   <button type="button" id="kaleidoToggle">Start</button>
-  <label>Fold <input type="range" id="foldCount" min="2" max="32" value="8"><span id="foldCountVal">8</span></label>
+  <label>Fold <input type="range" id="foldCount" min="2" max="32" value="8">
+    <input type="number" id="foldCountNum" min="2" max="32" value="8" style="width:52px;"></label>
   <label><input type="checkbox" id="motionZoom"> Zoom</label>
 </div>
 <h2>Gallery</h2>
@@ -71,7 +72,7 @@
   <button type="button" class="secondary" id="galleryNext">Next &rarr;</button>
   <label><input type="checkbox" id="galleryAuto"> Auto-advance every
     <input type="range" id="galleryInterval" min="5" max="300" value="30" style="width:100px;">
-    <span id="galleryIntervalVal">30</span>s</label>
+    <input type="number" id="galleryIntervalNum" min="5" max="300" value="30" style="width:56px;">s</label>
 </div>
 <div id="galleryList"></div>
 <p id="status">Loading status&hellip;</p>
@@ -296,7 +297,7 @@
 
   var kaleidoToggle = document.getElementById('kaleidoToggle');
   var foldCount = document.getElementById('foldCount');
-  var foldCountVal = document.getElementById('foldCountVal');
+  var foldCountNum = document.getElementById('foldCountNum');
   var motionZoom = document.getElementById('motionZoom');
   var kaleidoRunning = false;
 
@@ -318,8 +319,20 @@
     sendKaleidoSettings(kaleidoRunning ? {enabled: true} : null).catch(function () {});
   }
 
-  foldCount.addEventListener('input', function () { foldCountVal.textContent = foldCount.value; });
+  // Range and number input mirror each other - either one is the
+  // source of truth depending on which the user touched last.
+  foldCount.addEventListener('input', function () { foldCountNum.value = foldCount.value; });
+  foldCountNum.addEventListener('input', function () {
+    var v = foldCountNum.value;
+    if (v !== '') { foldCount.value = v; }
+  });
   foldCount.addEventListener('change', applyKaleidoSettings);
+  foldCountNum.addEventListener('change', function () {
+    var v = Math.max(2, Math.min(32, parseInt(foldCountNum.value, 10) || 2));
+    foldCountNum.value = v;
+    foldCount.value = v;
+    applyKaleidoSettings();
+  });
   motionZoom.addEventListener('change', applyKaleidoSettings);
 
   kaleidoToggle.addEventListener('click', function () {
@@ -336,7 +349,7 @@
 
   fetch('/api/kaleidoscope').then(function (r) { return r.json(); }).then(function (s) {
     foldCount.value = s.fold_count;
-    foldCountVal.textContent = s.fold_count;
+    foldCountNum.value = s.fold_count;
     motionZoom.checked = !!s.motion_zoom;
     kaleidoRunning = !!s.running;
     kaleidoToggle.textContent = kaleidoRunning ? 'Stop' : 'Start';
@@ -357,7 +370,7 @@
   var galleryNextBtn = document.getElementById('galleryNext');
   var galleryAuto = document.getElementById('galleryAuto');
   var galleryInterval = document.getElementById('galleryInterval');
-  var galleryIntervalVal = document.getElementById('galleryIntervalVal');
+  var galleryIntervalNum = document.getElementById('galleryIntervalNum');
 
   function refreshGalleryList() {
     fetch('/api/gallery').then(function (r) { return r.json(); }).then(function (s) {
@@ -415,17 +428,48 @@
       }),
     });
   }
-  galleryInterval.addEventListener('input', function () {
-    galleryIntervalVal.textContent = galleryInterval.value;
+
+  // The device cycles the gallery on its own timer while auto-advance is
+  // on (see gallery.c's background task) - without this, the browser's
+  // canvas preview just sits on whatever was showing when the page
+  // loaded and never reflects what the panel's actually cycled to since.
+  // Polls at a fixed cadence rather than matching interval_seconds
+  // exactly - simpler, and the bandwidth cost (one 12KB fetch/2s) is
+  // negligible on a LAN.
+  var galleryPollTimer = null;
+  function updateGalleryPolling() {
+    if (galleryAuto.checked && !galleryPollTimer) {
+      galleryPollTimer = setInterval(function () { refreshCanvasPreview().catch(function () {}); }, 2000);
+    } else if (!galleryAuto.checked && galleryPollTimer) {
+      clearInterval(galleryPollTimer);
+      galleryPollTimer = null;
+    }
+  }
+
+  // Range and number input mirror each other, same pattern as fold count.
+  galleryInterval.addEventListener('input', function () { galleryIntervalNum.value = galleryInterval.value; });
+  galleryIntervalNum.addEventListener('input', function () {
+    var v = galleryIntervalNum.value;
+    if (v !== '') { galleryInterval.value = v; }
   });
-  galleryAuto.addEventListener('change', function () { sendGalleryMode().catch(function () {}); });
+  galleryAuto.addEventListener('change', function () {
+    updateGalleryPolling();
+    sendGalleryMode().catch(function () {});
+  });
   galleryInterval.addEventListener('change', function () { sendGalleryMode().catch(function () {}); });
+  galleryIntervalNum.addEventListener('change', function () {
+    var v = Math.max(5, Math.min(300, parseInt(galleryIntervalNum.value, 10) || 5));
+    galleryIntervalNum.value = v;
+    galleryInterval.value = v;
+    sendGalleryMode().catch(function () {});
+  });
 
   refreshGalleryList();
   fetch('/api/gallery/mode').then(function (r) { return r.json(); }).then(function (s) {
     galleryAuto.checked = !!s.auto_advance;
+    updateGalleryPolling();
     galleryInterval.value = s.interval_seconds;
-    galleryIntervalVal.textContent = s.interval_seconds;
+    galleryIntervalNum.value = s.interval_seconds;
   }).catch(function () {});
 })();
 </script>
