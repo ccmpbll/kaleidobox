@@ -30,6 +30,13 @@ jobs:
       - name: Build firmware
         uses: espressif/esp-idf-ci-action@v1
         with:
-          esp_idf_version: v5.3.4
+          # esp-hub75's ESP32-S3 GDMA driver code needs fields
+          # (gdma_channel_alloc_config_t.isr_cache_safe,
+          # gdma_strategy_config_t.eof_till_data_popped) that don't exist
+          # in ESP-IDF 5.3.4's GDMA headers - confirmed by a real build
+          # failure, not assumed. 5.5.2 matches what Waveshare's own
+          # official example is built against and is confirmed working
+          # locally.
+          esp_idf_version: v5.5.2
           target: esp32s3
           command: idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.esp32s3" build

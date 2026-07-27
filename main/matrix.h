@@ -25,8 +25,8 @@ extern "C" {
 // (Hub75Driver class -> extern "C" functions), which is a good sign this
 // approach is sound for this board specifically.
 //
-// STUB - matrix.cpp currently only logs; no panel output yet. Pins are
-// verified (board_pins.h) but the esp-hub75 component isn't wired up.
+// Implemented against esp-hub75's real API (Hub75Driver/Hub75Config from
+// hub75.h) - see matrix.cpp. Not yet flashed/tested on real hardware.
 
 esp_err_t kaleidobox_matrix_init(void);
 

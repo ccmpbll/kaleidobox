@@ -11,6 +11,12 @@ CONFIG_NEWLIB_NANO_FORMAT=y
 # Required for AP-mode WiFi provisioning - off by default in ESP-IDF
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
 
+# Required for /ws/draw (instant-draw mode) - esp_http_server's WebSocket
+# support is off by default too. Found by an actual build failure
+# (httpd_ws_recv_frame/HTTPD_WS_TYPE_TEXT/httpd_uri_t.is_websocket all
+# undeclared without it), not assumed up front.
+CONFIG_HTTPD_WS_SUPPORT=y
+
 # Browsers open several parallel connections to the setup/admin page; the
 # draw-mode WebSocket and gallery/log SSE streams each hold one open too.
 # Default (10) can starve requests under real use - same reasoning as

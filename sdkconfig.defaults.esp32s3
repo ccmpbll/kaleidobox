@@ -5,6 +5,13 @@
 # declaring MORE flash than physically present, not less).
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions-8m.csv"
+# ESP-IDF's default flash-size setting (2MB) is too small for
+# partitions-8m.csv's ~6.1MB table - build fails at partition-table
+# generation without this. 8MB matches the table's actual span; real
+# physical flash is 32MB (see comment above) but there's no reason to
+# declare more than the partition table uses.
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
 CONFIG_SPIRAM=y
 # Confirmed, not assumed: the schematic (docs/ESP32-S3-RGB-Matrix-
 # Schematics.pdf) labels the module "ESP32-S3-WROOM-2-N32R16V" - WROOM-2

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esp_err.h"
+#include <stdbool.h>
 
 // Mounts the TF card as FAT via 1-bit SDMMC (esp_vfs_fat_sdmmc_mount) -
 // confirmed against Waveshare's official BSP (D1/D2/D3 are unconnected on

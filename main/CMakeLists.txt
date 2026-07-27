@@ -27,6 +27,7 @@ idf_component_register(
     esp_timer
     esp_wifi
     esp-tls
+    esphome__esp-hub75
     fatfs
     json
     log

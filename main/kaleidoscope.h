@@ -2,6 +2,7 @@
 
 #include "esp_err.h"
 #include "image_decode.h"
+#include <stdbool.h>
 
 // Per-frame polar-fold kaleidoscope transform: for each output pixel,
 // compute angle+radius from center, fold the angle into the base wedge
