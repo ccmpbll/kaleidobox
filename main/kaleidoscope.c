@@ -133,6 +133,19 @@ static void kaleidoscope_task(void *arg) {
   float rotation_offset = 0.0f;
   float zoom_phase = 0.0f;
 
+  // render_frame + the matrix push measured at ~21-24ms on real
+  // hardware - a fixed vTaskDelay(40ms) on top of that (the original
+  // version) gave an actual ~60-70ms period, more like 15fps than the
+  // intended 25. vTaskDelayUntil is the standard FreeRTOS fix for
+  // exactly this (fixed-period task, variable per-iteration work): it
+  // tracks an absolute next-wake tick instead of a fresh relative
+  // delay computed from "however long is left" each time, which
+  // avoids compounding tick-rounding error (a plain
+  // vTaskDelay(pdMS_TO_TICKS(remaining_ms)) was tried first and
+  // measured ~30ms - undershooting via repeated floor-rounding at this
+  // board's 10ms tick resolution, not overshooting).
+  TickType_t last_wake_time = xTaskGetTickCount();
+
   while (g_should_run) {
     float zoom_scale = motion_zoom ? (1.0f + ZOOM_AMPLITUDE * sinf(zoom_phase)) : 1.0f;
     render_frame(frame, rotation_offset, zoom_scale);
@@ -155,7 +168,7 @@ static void kaleidoscope_task(void *arg) {
       zoom_phase -= 2.0f * (float)M_PI;
     }
 
-    vTaskDelay(pdMS_TO_TICKS(FRAME_INTERVAL_MS));
+    vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(FRAME_INTERVAL_MS));
   }
 
   free(frame);
