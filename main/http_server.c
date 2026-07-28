@@ -57,6 +57,8 @@ static httpd_handle_t server = NULL;
 
 extern const uint8_t app_html_start[] asm("_binary_app_html_start");
 extern const uint8_t app_html_end[] asm("_binary_app_html_end");
+extern const uint8_t settings_html_start[] asm("_binary_settings_html_start");
+extern const uint8_t settings_html_end[] asm("_binary_settings_html_end");
 
 // Long-running handlers (SSE log console) block whichever task runs them
 // until the client disconnects. esp_http_server services all connections
@@ -87,7 +89,7 @@ static void async_worker_task(void *arg) {
 }
 
 static esp_err_t async_pool_init(async_pool_t *pool, int size,
-                                 const char *name_prefix) {
+                                 const char *name_prefix, uint32_t stack_size) {
   pool->free_slots = xSemaphoreCreateCounting(size, 0);
   pool->queue = xQueueCreate(size, sizeof(async_job_t));
   if (!pool->free_slots || !pool->queue) {
@@ -96,8 +98,12 @@ static esp_err_t async_pool_init(async_pool_t *pool, int size,
   for (int i = 0; i < size; i++) {
     char task_name[20];
     snprintf(task_name, sizeof(task_name), "%s_%d", name_prefix, i);
-    xTaskCreate(async_worker_task, task_name, 4096, pool,
-               tskIDLE_PRIORITY + 1, NULL);
+    if (xTaskCreate(async_worker_task, task_name, stack_size, pool,
+                    tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
+      ESP_LOGE(TAG, "xTaskCreate(%s, stack=%u) failed", task_name,
+               (unsigned)stack_size);
+      return ESP_ERR_NO_MEM;
+    }
   }
   return ESP_OK;
 }
@@ -133,6 +139,12 @@ static async_pool_t log_pool;
 static esp_err_t root_handler(httpd_req_t *req) {
   httpd_resp_set_type(req, "text/html");
   return httpd_resp_send(req, (const char *)app_html_start,
+                         HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t settings_page_handler(httpd_req_t *req) {
+  httpd_resp_set_type(req, "text/html");
+  return httpd_resp_send(req, (const char *)settings_html_start,
                          HTTPD_RESP_USE_STRLEN);
 }
 
@@ -424,9 +436,9 @@ static esp_err_t ws_draw_handler(httpd_req_t *req) {
 // one shot.
 // Raw RGB888 readback of the live canvas buffer - lets the web UI
 // repaint itself on page load instead of showing a blank grid that
-// doesn't match what's actually on the panel (draw, upload, and
-// gallery all mutate this same buffer via kaleidobox_canvas_set_all/
-// set_pixel, so this one endpoint covers all three sources).
+// doesn't match what's actually on the panel (draw and gallery-show
+// both mutate this same buffer via kaleidobox_canvas_set_all/set_pixel,
+// so this one endpoint covers both sources).
 static esp_err_t canvas_get_handler(httpd_req_t *req) {
   httpd_resp_set_type(req, "application/octet-stream");
   return httpd_resp_send(req, (const char *)kaleidobox_canvas_buffer(),
@@ -482,107 +494,6 @@ static esp_err_t canvas_submit_post_handler(httpd_req_t *req) {
 // 16MB PSRAM. Rejected outright at the content_len check below, before
 // any allocation.
 #define MAX_UPLOAD_BYTES (8 * 1024 * 1024)
-
-static esp_err_t upload_post_handler(httpd_req_t *req) {
-  if (req->content_len == 0 || req->content_len > MAX_UPLOAD_BYTES) {
-    httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_sendstr(req, "{\"error\":\"missing or oversized body\"}");
-    return ESP_FAIL;
-  }
-
-  uint8_t *raw = malloc(req->content_len);
-  if (!raw) {
-    httpd_resp_send_500(req);
-    return ESP_FAIL;
-  }
-
-  int64_t t_recv_start = esp_timer_get_time();
-  size_t received = 0;
-  while (received < req->content_len) {
-    int r = httpd_req_recv(req, (char *)raw + received, req->content_len - received);
-    if (r <= 0) {
-      free(raw);
-      httpd_resp_send_500(req);
-      return ESP_FAIL;
-    }
-    received += r;
-  }
-  int64_t t_recv_end = esp_timer_get_time();
-
-  kaleidobox_image_t img = {0};
-  esp_err_t err = kaleidobox_image_decode(raw, req->content_len, &img);
-  int64_t t_decode_end = esp_timer_get_time();
-  free(raw);
-  // %lld isn't supported by ESP-IDF's default nano-printf (CONFIG_NEWLIB_NANO_FORMAT) -
-  // silently corrupts the whole line, including args after it. Millisecond
-  // deltas fit comfortably in int32 here, so cast down instead.
-  ESP_LOGI(TAG, "upload timing: recv=%dms decode=%dms (body=%u bytes)",
-           (int)((t_recv_end - t_recv_start) / 1000), (int)((t_decode_end - t_recv_end) / 1000),
-           (unsigned)req->content_len);
-  if (err != ESP_OK) {
-    httpd_resp_set_status(req, "400 Bad Request");
-    // PNG decodes at native resolution with no scaling option (unlike
-    // baseline JPEG), so large PNGs hit a real, low-ish size limit - both
-    // ESP_ERR_INVALID_SIZE (rejected before decoding) and a still-possible
-    // in-decode allocation failure land here. Progressive JPEG hits the
-    // same ESP_ERR_INVALID_SIZE for a related but distinct reason: it
-    // needs the full-resolution DCT coefficient buffer up front regardless
-    // of the scaled output size (unlike baseline, which streams
-    // scanline-by-scanline) - see the check in image_decode.c's
-    // decode_jpeg(). Both get the same generic-enough message rather than
-    // two near-duplicate ones, since the actionable advice is the same
-    // either way: the file's too big for how this device has to decode it.
-    if (err == ESP_ERR_INVALID_SIZE) {
-      httpd_resp_sendstr(req, "{\"error\":\"Image too large for this device to "
-                              "decode (progressive JPEG needs its full "
-                              "resolution in memory regardless of display "
-                              "size - about 4.5 megapixels max; PNG has no "
-                              "scaling at all - about 2 megapixels max). Try "
-                              "a smaller image, or re-save as a baseline "
-                              "(non-progressive) JPEG, which has no such "
-                              "limit.\"}");
-    } else if (err == ESP_ERR_NOT_SUPPORTED) {
-      // Recognized JPEG magic bytes, but libjpeg-turbo rejected it -
-      // baseline and progressive are both supported now (that's the
-      // whole reason it replaced esp_jpeg/tjpgd), so this means a
-      // genuinely corrupt file or an unusual variant (12-bit, CMYK,
-      // arithmetic coding edge case).
-      httpd_resp_sendstr(req, "{\"error\":\"Could not read this JPEG - the file "
-                              "may be corrupt or use an unsupported encoding "
-                              "variant. Try a different image or re-export "
-                              "it, or use PNG instead (under ~2 "
-                              "megapixels).\"}");
-    } else {
-      httpd_resp_sendstr(req, "{\"error\":\"could not decode image - must be "
-                              "JPEG or PNG\"}");
-    }
-    return ESP_FAIL;
-  }
-
-  // Heap, not stack - CANVAS_WIDTH*CANVAS_HEIGHT*3 (12288 bytes) doesn't
-  // fit this handler's httpd task stack (8192 bytes total). Same class
-  // of bug already caught once in canvas_submit_post_handler - not
-  // repeating it here.
-  uint8_t *resized = malloc(CANVAS_WIDTH * CANVAS_HEIGHT * 3);
-  if (!resized) {
-    kaleidobox_image_free(&img);
-    httpd_resp_send_500(req);
-    return ESP_FAIL;
-  }
-  int64_t t_resize_start = esp_timer_get_time();
-  kaleidobox_image_resize_to_canvas(&img, resized);
-  int64_t t_resize_end = esp_timer_get_time();
-  kaleidobox_image_free(&img);
-  kaleidobox_canvas_set_all(resized);
-  int64_t t_set_all_end = esp_timer_get_time();
-  ESP_LOGI(TAG, "upload timing: resize=%dms set_all=%dms",
-           (int)((t_resize_end - t_resize_start) / 1000), (int)((t_set_all_end - t_resize_end) / 1000));
-  free(resized);
-
-  httpd_resp_set_type(req, "application/json");
-  httpd_resp_sendstr(req, "{\"ok\":true}");
-  return ESP_OK;
-}
 
 // --- Kaleidoscope settings ------------------------------------------------
 
@@ -912,10 +823,8 @@ static esp_err_t gallery_show_post_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
-// Decodes+resizes straight to a named gallery entry, never touching
-// the live canvas - a separate path from POST /api/upload, which is
-// "replace what's showing now". Body/decode/resize handling mirrors
-// upload_post_handler() above; only the destination differs.
+// Decodes+resizes straight to a named gallery entry, never touching the
+// live canvas.
 static esp_err_t gallery_upload_post_handler(httpd_req_t *req) {
   static const char *prefix = "/api/gallery/upload/";
   size_t prefix_len = strlen(prefix);
@@ -955,8 +864,9 @@ static esp_err_t gallery_upload_post_handler(httpd_req_t *req) {
   if (err != ESP_OK) {
     httpd_resp_set_status(req, "400 Bad Request");
     httpd_resp_sendstr(req, "{\"error\":\"could not decode image - must be JPEG "
-                            "or PNG, and small enough to decode on-device (see "
-                            "POST /api/upload's error text for exact limits)\"}");
+                            "or PNG, and small enough to decode on-device (8MB "
+                            "cap; progressive JPEG/PNG need their full "
+                            "resolution in memory regardless of display size)\"}");
     return ESP_FAIL;
   }
 
@@ -991,15 +901,15 @@ esp_err_t kaleidobox_http_server_start(void) {
     return ESP_OK; // already running
   }
 
-  if (async_pool_init(&log_pool, LOG_WORKER_COUNT, "log_worker") != ESP_OK) {
-    ESP_LOGE(TAG, "failed to init async worker pool");
+  if (async_pool_init(&log_pool, LOG_WORKER_COUNT, "log_worker", 4096) != ESP_OK) {
+    ESP_LOGE(TAG, "failed to init log async worker pool");
     return ESP_ERR_NO_MEM;
   }
 
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.stack_size = 8192;
   // Default max_uri_handlers is 8 - we register more than that (root,
-  // status, logs, wifi, ota, ws/draw, canvas get/submit, upload,
+  // settings page, status, logs, wifi, ota, ws/draw, canvas get/submit,
   // kaleidoscope x2, brightness x2, gallery x10). Past the cap,
   // httpd_register_uri_handler silently drops the excess - printspy-cam
   // hit this exact bug once already (see its http_server.c comment).
@@ -1025,6 +935,8 @@ esp_err_t kaleidobox_http_server_start(void) {
   }
 
   httpd_uri_t root_uri = {.uri = "/", .method = HTTP_GET, .handler = root_handler};
+  httpd_uri_t settings_page_uri = {
+      .uri = "/settings", .method = HTTP_GET, .handler = settings_page_handler};
   httpd_uri_t status_uri = {
       .uri = "/api/status", .method = HTTP_GET, .handler = status_handler};
   httpd_uri_t logs_uri = {
@@ -1042,8 +954,6 @@ esp_err_t kaleidobox_http_server_start(void) {
   httpd_uri_t canvas_submit_uri = {.uri = "/api/canvas/submit",
                                    .method = HTTP_POST,
                                    .handler = canvas_submit_post_handler};
-  httpd_uri_t upload_uri = {
-      .uri = "/api/upload", .method = HTTP_POST, .handler = upload_post_handler};
   httpd_uri_t kaleidoscope_get_uri = {.uri = "/api/kaleidoscope",
                                       .method = HTTP_GET,
                                       .handler = kaleidoscope_get_handler};
@@ -1087,6 +997,7 @@ esp_err_t kaleidobox_http_server_start(void) {
                                     .handler = gallery_upload_post_handler};
 
   httpd_register_uri_handler(server, &root_uri);
+  httpd_register_uri_handler(server, &settings_page_uri);
   httpd_register_uri_handler(server, &status_uri);
   httpd_register_uri_handler(server, &logs_uri);
   httpd_register_uri_handler(server, &wifi_uri);
@@ -1094,7 +1005,6 @@ esp_err_t kaleidobox_http_server_start(void) {
   httpd_register_uri_handler(server, &ws_draw_uri);
   httpd_register_uri_handler(server, &canvas_get_uri);
   httpd_register_uri_handler(server, &canvas_submit_uri);
-  httpd_register_uri_handler(server, &upload_uri);
   httpd_register_uri_handler(server, &kaleidoscope_get_uri);
   httpd_register_uri_handler(server, &kaleidoscope_post_uri);
   httpd_register_uri_handler(server, &brightness_get_uri);

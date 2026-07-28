@@ -46,11 +46,14 @@
     font-size:.9rem;font-weight:600;cursor:pointer;}
   button:active{opacity:.85;}
   button.secondary{background:rgb(45,45,52);color:rgb(230,230,232);}
+  button.danger{background:linear-gradient(217deg,#e03131,#ff6b6b);color:#fff;}
   button:disabled{opacity:.5;cursor:default;}
   .uploadLabel{padding:10px 16px;border-radius:6px;background:rgb(45,45,52);
     color:rgb(230,230,232);font-size:.9rem;font-weight:600;cursor:pointer;}
   .uploadLabel:active{opacity:.85;}
-  #status{margin:0;font-size:.8rem;color:rgb(150,150,160);white-space:nowrap;}
+  .settingsLink{color:rgb(140,165,255);font-size:.8rem;text-decoration:none;
+    white-space:nowrap;}
+  .settingsLink:active{opacity:.7;}
   #galleryList{display:flex;flex-direction:column;gap:6px;margin-top:10px;
     max-width:512px;}
   .galleryItem{display:flex;align-items:center;gap:10px;padding:8px 10px;
@@ -82,9 +85,9 @@
 <body>
 <div id="header">
   <h1>KaleidoBox</h1>
-  <p id="status">Loading status&hellip;</p>
+  <a class="settingsLink" href="/settings">Settings</a>
 </div>
-<p class="sub">Draw, upload, or animate a kaleidoscope on the panel.</p>
+<p class="sub">Draw, browse the gallery, or animate a kaleidoscope on the panel.</p>
 
 <div class="section">
   <h2>Draw</h2>
@@ -92,10 +95,8 @@
   <div class="controls">
     <label>Color <input type="color" id="color" value="#ffffff"></label>
     <label><input type="checkbox" id="instant" checked> Instant draw</label>
-    <button type="button" class="secondary" id="clear">Clear</button>
     <button type="button" id="submit" hidden>Submit</button>
-    <label id="uploadLabel" class="uploadLabel" for="upload"><span id="uploadLabelText">Upload picture</span></label>
-    <input type="file" id="upload" accept="image/jpeg,image/png" style="display:none;">
+    <button type="button" class="danger" id="clear" style="margin-left:auto;">CLEAR/STOP</button>
   </div>
 </div>
 
@@ -315,55 +316,14 @@
       });
   });
 
-  var uploadInput = document.getElementById('upload');
-  var uploadLabelText = document.getElementById('uploadLabelText');
-  uploadInput.addEventListener('change', function () {
-    var file = uploadInput.files[0];
-    if (!file) {
-      return;
-    }
-
-    // Local preview only - draws the picked image scaled into our 64x64
-    // canvas via the browser's own image decode/scale (native feature,
-    // no server round trip needed just to preview). The real panel
-    // comes from the device's own authoritative box-filter decode of
-    // the original file, sent separately below - this is an
-    // approximation for what's shown here in the browser, nothing more.
-    var objectUrl = URL.createObjectURL(file);
-    var img = new Image();
-    img.onload = function () {
-      ctx.drawImage(img, 0, 0, W, H);
-      var pixels = ctx.getImageData(0, 0, W, H).data;
-      for (var i = 0, p = 0; i < W * H; i++, p += 4) {
-        buffer[i * 3] = pixels[p];
-        buffer[i * 3 + 1] = pixels[p + 1];
-        buffer[i * 3 + 2] = pixels[p + 2];
-      }
-      URL.revokeObjectURL(objectUrl);
-    };
-    img.src = objectUrl;
-
-    var original = uploadLabelText.textContent;
-    uploadLabelText.textContent = 'Uploading…';
-    fetch('/api/upload', {method: 'POST', body: file})
-      .then(function (r) {
-        uploadLabelText.textContent = r.ok ? 'Uploaded!' : 'Failed - retry';
-      })
-      .catch(function () { uploadLabelText.textContent = 'Failed - retry'; })
-      .finally(function () {
-        uploadInput.value = '';
-        setTimeout(function () { uploadLabelText.textContent = original; }, 1500);
-      });
-  });
-
   if (instantCheckbox.checked) {
     ensureWs();
   }
 
   // Repaint from whatever's actually on the panel right now - the local
   // buffer above starts all-zero on every page load/refresh, which
-  // doesn't reflect device state (draw, upload, and gallery all leave
-  // something on the panel that persists across refreshes).
+  // doesn't reflect device state (draw and gallery both leave something
+  // on the panel that persists across refreshes).
   function refreshCanvasPreview() {
     return fetch('/api/canvas')
       .then(function (r) { return r.arrayBuffer(); })
@@ -476,14 +436,6 @@
     kaleidoRunning = !!s.running;
     kaleidoToggle.textContent = kaleidoRunning ? 'Stop' : 'Start';
   }).catch(function () {});
-
-  fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
-    document.getElementById('status').textContent =
-      'KaleidoBox ' + s.version + ' - ' + (s.wifi_ssid || 'no wifi') +
-      ' - up ' + s.uptime_seconds + 's';
-  }).catch(function () {
-    document.getElementById('status').textContent = 'Status unavailable';
-  });
 
   var galleryList = document.getElementById('galleryList');
   var gallerySaveName = document.getElementById('gallerySaveName');

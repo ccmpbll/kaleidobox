@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>KaleidoBox Settings</title>
+<style>
+  /* Shared look with app.html - pages can't share a stylesheet file
+     today (both are single embedded HTML blobs), so this block is a
+     deliberate duplicate of the relevant subset of app.html's <style>,
+     trimmed of selectors this page has no elements for (canvas, color
+     swatch, gallery grid). */
+  body{margin:0 auto;padding:16px;max-width:560px;box-sizing:border-box;
+    background:rgb(18,18,20);color:rgb(230,230,232);
+    font-family:-apple-system,BlinkMacSystemFont,
+    'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}
+  h1{font-size:1.2rem;font-weight:700;margin:0;}
+  #header{display:flex;align-items:baseline;justify-content:space-between;
+    gap:12px;flex-wrap:wrap;margin-bottom:4px;}
+  p.sub{margin:0 0 16px;color:rgb(150,150,160);font-size:.85rem;}
+  .section{background:rgb(24,24,28);border:1px solid rgb(42,42,50);
+    border-radius:10px;padding:14px 16px;margin-bottom:16px;}
+  .section h2{font-size:.8rem;font-weight:700;text-transform:uppercase;
+    letter-spacing:.06em;color:rgb(140,165,255);margin:0 0 4px;}
+  .section p.sub{margin:0 0 10px;}
+  .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;
+    max-width:512px;}
+  .controls + .controls{margin-top:10px;}
+  button{padding:10px 16px;border:none;border-radius:6px;
+    background:linear-gradient(217deg,#4c6ef5,#22b8cf);color:#fff;
+    font-size:.9rem;font-weight:600;cursor:pointer;}
+  button:active{opacity:.85;}
+  button:disabled{opacity:.5;cursor:default;}
+  .uploadLabel{padding:10px 16px;border-radius:6px;background:rgb(45,45,52);
+    color:rgb(230,230,232);font-size:.9rem;font-weight:600;cursor:pointer;}
+  .uploadLabel:active{opacity:.85;}
+  #status{margin:0;font-size:.85rem;color:rgb(150,150,160);}
+  a.back{color:rgb(140,165,255);font-size:.85rem;text-decoration:none;}
+  a.back:active{opacity:.7;}
+  .result{font-size:.85rem;color:rgb(150,150,160);margin:10px 0 0;}
+  @media (max-width:380px){
+    body{padding:12px;}
+    button,.uploadLabel{padding:9px 12px;font-size:.85rem;}
+    .controls{gap:8px;}
+  }
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>Settings</h1>
+  <a class="back" href="/">&larr; Back to panel</a>
+</div>
+<p class="sub">Status and firmware updates.</p>
+
+<div class="section">
+  <h2>Status</h2>
+  <p id="status">Loading status&hellip;</p>
+</div>
+
+<div class="section">
+  <h2>Firmware update</h2>
+  <p class="sub">Uploads a new firmware image and reboots onto it immediately.</p>
+  <div class="controls">
+    <label id="otaLabel" class="uploadLabel" for="otaFile"><span id="otaLabelText">Choose firmware .bin</span></label>
+    <input type="file" id="otaFile" accept=".bin" style="display:none;">
+  </div>
+  <p id="otaResult" class="result"></p>
+</div>
+
+<script>
+(function () {
+  fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
+    document.getElementById('status').textContent =
+      'KaleidoBox ' + s.version + ' - ' + (s.wifi_ssid || 'no wifi') +
+      ' - up ' + s.uptime_seconds + 's';
+  }).catch(function () {
+    document.getElementById('status').textContent = 'Status unavailable';
+  });
+
+  var otaFile = document.getElementById('otaFile');
+  var otaLabelText = document.getElementById('otaLabelText');
+  var otaResult = document.getElementById('otaResult');
+  otaFile.addEventListener('change', function () {
+    var file = otaFile.files[0];
+    if (!file) {
+      return;
+    }
+    if (!confirm('Upload ' + file.name + ' (' + file.size + ' bytes) as new ' +
+                 'firmware and reboot? A bad image can leave the board ' +
+                 'needing a serial reflash - there is no automatic rollback.')) {
+      otaFile.value = '';
+      return;
+    }
+    var original = otaLabelText.textContent;
+    otaLabelText.textContent = 'Uploading…';
+    otaResult.textContent = '';
+    fetch('/api/ota', {method: 'POST', body: file})
+      .then(function (r) {
+        if (r.ok) {
+          otaResult.textContent = 'Update applied - rebooting…';
+        } else {
+          return r.text().then(function (t) {
+            otaResult.textContent = 'Failed: ' + t;
+          });
+        }
+      })
+      .catch(function () { otaResult.textContent = 'Failed - check connection and retry.'; })
+      .finally(function () {
+        otaFile.value = '';
+        otaLabelText.textContent = original;
+      });
+  });
+})();
+</script>
+</body>
+</html>

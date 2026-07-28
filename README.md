@@ -46,16 +46,17 @@ kaleidobox/
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/` | web app |
+| GET | `/settings` | settings page (firmware update) |
 | GET | `/api/status` | version/IP/SSID/uptime/current mode |
 | POST | `/api/wifi` | update creds → reboot |
 | POST | `/api/ota` | firmware upload → reboot |
 | GET | `/api/logs` | SSE log console |
 | WS | `/ws/draw` | instant-draw pixel stream |
 | POST | `/api/canvas/submit` | draw-then-submit full-grid push |
-| POST | `/api/upload` | image upload → decode/resize/dither → display |
 | GET/POST | `/api/kaleidoscope` | fold count, motion mode, on/off |
 | GET | `/api/gallery` | list saved images |
 | POST | `/api/gallery/save` | save current buffer to TF card |
+| POST | `/api/gallery/upload/:name` | image upload → decode/resize/dither → save to gallery |
 | DELETE | `/api/gallery/:name` | remove image |
 | POST | `/api/gallery/mode` | auto-advance (+interval) vs manual |
 | POST | `/api/gallery/next` / `/prev` | manual cycle |

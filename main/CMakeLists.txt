@@ -19,6 +19,7 @@ idf_component_register(
     "."
   EMBED_TXTFILES
     "../web/app.html"
+    "../web/settings.html"
   REQUIRES
     app_update
     bootloader_support
