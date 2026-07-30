@@ -39,9 +39,25 @@
   .subLabel{font-size:.7rem;font-weight:700;text-transform:uppercase;
     letter-spacing:.05em;color:rgb(130,130,145);margin:14px 0 6px;}
   .subLabel:first-of-type{margin-top:0;}
-  #canvas{display:block;width:100%;max-width:512px;aspect-ratio:1;
-    background:#000;border-radius:8px;touch-action:none;
-    image-rendering:pixelated;margin-bottom:14px;}
+  .canvasWrap{position:relative;width:100%;max-width:512px;aspect-ratio:1;
+    border-radius:8px;overflow:hidden;margin-bottom:14px;}
+  #canvas{display:block;position:absolute;inset:0;width:100%;height:100%;
+    background:#000;touch-action:none;image-rendering:pixelated;}
+  /* Faint per-pixel grid, purely visual (drawn on a separate layer, not
+     the canvas itself) - one line per cell edge, tiled via a
+     background-size fraction so it stays aligned regardless of the
+     canvas's actual displayed size (responsive/phone vs. desktop).
+     mix-blend-mode:difference instead of a fixed white/black line - a
+     flat-opacity white line disappears entirely against a white pixel
+     (same problem in reverse for black against black). Difference
+     against a mid-gray inverts relative to whatever's underneath, so it
+     reads as a visible line against both extremes instead of just one. */
+  .canvasGrid{position:absolute;inset:0;pointer-events:none;
+    mix-blend-mode:difference;
+    background-image:
+      linear-gradient(to right, rgba(128,128,128,.6) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(128,128,128,.6) 1px, transparent 1px);
+    background-size: calc(100% / 64) calc(100% / 64);}
   .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;
     max-width:512px;}
   .controls + .controls{margin-top:10px;}
@@ -98,7 +114,10 @@
 
 <div class="section">
   <h2>Draw</h2>
-  <canvas id="canvas" width="64" height="64"></canvas>
+  <div class="canvasWrap">
+    <canvas id="canvas" width="64" height="64"></canvas>
+    <div class="canvasGrid"></div>
+  </div>
   <div class="controls">
     <label>Color <input type="color" id="color" value="#ffffff"></label>
     <label><input type="checkbox" id="instant" checked> Instant draw</label>
@@ -362,11 +381,42 @@
 
   // Unlike kaleidoscope's settings (which need a full restart to take
   // effect, so those wait for 'change'/mouse-up), a brightness change
-  // is a single cheap register write on the device - send it live on
-  // every 'input' tick so dragging the slider previews in real time.
+  // is cheap enough to send live on every 'input' tick - but the naive
+  // version of that (fire-and-forget fetch() per tick) is exactly what
+  // made the setting "not always stick": a fast drag fires many
+  // overlapping requests, browsers open several parallel connections
+  // per host, and there's no guarantee they land on the device (and
+  // write NVS) in the same order they were sent - a slightly-stale
+  // request finishing last silently overwrites the real final value.
+  // Queueing here guarantees at most one in-flight request, always
+  // carrying the latest known value, so whichever one lands last is
+  // always correct regardless of network timing.
+  var brightnessTimer = null, brightnessInFlight = false,
+      brightnessDirty = false, brightnessLatest = null;
+
+  function queueBrightness(value) {
+    brightnessLatest = value;
+    brightnessDirty = true;
+    if (brightnessTimer) return;
+    brightnessTimer = setTimeout(flushBrightness, 80);
+  }
+
+  function flushBrightness() {
+    brightnessTimer = null;
+    if (brightnessInFlight || !brightnessDirty) return;
+    brightnessDirty = false;
+    brightnessInFlight = true;
+    sendBrightness(brightnessLatest).catch(function () {}).finally(function () {
+      brightnessInFlight = false;
+      // More ticks arrived while that request was in flight - send the
+      // latest value now instead of waiting for another debounce delay.
+      if (brightnessDirty) flushBrightness();
+    });
+  }
+
   brightness.addEventListener('input', function () {
     brightnessNum.value = brightness.value;
-    sendBrightness(parseInt(brightness.value, 10)).catch(function () {});
+    queueBrightness(parseInt(brightness.value, 10));
   });
   brightnessNum.addEventListener('input', function () {
     var v = brightnessNum.value;
@@ -376,7 +426,7 @@
     var v = Math.max(1, Math.min(255, parseInt(brightnessNum.value, 10) || 1));
     brightnessNum.value = v;
     brightness.value = v;
-    sendBrightness(v).catch(function () {});
+    queueBrightness(v);
   });
 
   fetch('/api/brightness').then(function (r) { return r.json(); }).then(function (s) {
