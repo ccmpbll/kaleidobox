@@ -44,9 +44,17 @@
   #canvas{display:block;position:absolute;inset:0;width:100%;height:100%;
     background:#000;touch-action:none;image-rendering:pixelated;}
   /* Faint per-pixel grid, purely visual (drawn on a separate layer, not
-     the canvas itself) - one line per cell edge, tiled via a
-     background-size fraction so it stays aligned regardless of the
-     canvas's actual displayed size (responsive/phone vs. desktop).
+     the canvas itself). A single SVG scaled as one image (background-size
+     100% 100%, no repeat) - NOT a small tile repeated 64 times. A tiled
+     gradient (the first version of this) drifted out of alignment with
+     the canvas's own pixels: the canvas bitmap's upscale and the tiled
+     background's per-tile rounding are two independent sub-pixel
+     roundings that don't agree, and the error compounds over 64 repeats
+     (caught by the user on real hardware - visibly off, worse toward the
+     far edge). A single image scaled once has nothing to compound - it
+     tracks the canvas's own width:100% scaling directly. The SVG's own
+     viewBox is 0..64 with a line at every integer, so cell count is
+     exactly 64 by construction, not by matching two separate CSS values.
      mix-blend-mode:difference instead of a fixed white/black line - a
      flat-opacity white line disappears entirely against a white pixel
      (same problem in reverse for black against black). Difference
@@ -54,10 +62,9 @@
      reads as a visible line against both extremes instead of just one. */
   .canvasGrid{position:absolute;inset:0;pointer-events:none;
     mix-blend-mode:difference;
-    background-image:
-      linear-gradient(to right, rgba(128,128,128,.6) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(128,128,128,.6) 1px, transparent 1px);
-    background-size: calc(100% / 64) calc(100% / 64);}
+    background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Cpath%20d%3D%22M1%200V64M0%201H64M2%200V64M0%202H64M3%200V64M0%203H64M4%200V64M0%204H64M5%200V64M0%205H64M6%200V64M0%206H64M7%200V64M0%207H64M8%200V64M0%208H64M9%200V64M0%209H64M10%200V64M0%2010H64M11%200V64M0%2011H64M12%200V64M0%2012H64M13%200V64M0%2013H64M14%200V64M0%2014H64M15%200V64M0%2015H64M16%200V64M0%2016H64M17%200V64M0%2017H64M18%200V64M0%2018H64M19%200V64M0%2019H64M20%200V64M0%2020H64M21%200V64M0%2021H64M22%200V64M0%2022H64M23%200V64M0%2023H64M24%200V64M0%2024H64M25%200V64M0%2025H64M26%200V64M0%2026H64M27%200V64M0%2027H64M28%200V64M0%2028H64M29%200V64M0%2029H64M30%200V64M0%2030H64M31%200V64M0%2031H64M32%200V64M0%2032H64M33%200V64M0%2033H64M34%200V64M0%2034H64M35%200V64M0%2035H64M36%200V64M0%2036H64M37%200V64M0%2037H64M38%200V64M0%2038H64M39%200V64M0%2039H64M40%200V64M0%2040H64M41%200V64M0%2041H64M42%200V64M0%2042H64M43%200V64M0%2043H64M44%200V64M0%2044H64M45%200V64M0%2045H64M46%200V64M0%2046H64M47%200V64M0%2047H64M48%200V64M0%2048H64M49%200V64M0%2049H64M50%200V64M0%2050H64M51%200V64M0%2051H64M52%200V64M0%2052H64M53%200V64M0%2053H64M54%200V64M0%2054H64M55%200V64M0%2055H64M56%200V64M0%2056H64M57%200V64M0%2057H64M58%200V64M0%2058H64M59%200V64M0%2059H64M60%200V64M0%2060H64M61%200V64M0%2061H64M62%200V64M0%2062H64M63%200V64M0%2063H64%22%20stroke%3D%22gray%22%20stroke-width%3D%220.08%22%20fill%3D%22none%22/%3E%3C/svg%3E");
+    background-size: 100% 100%;
+    background-repeat: no-repeat;}
   .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;
     max-width:512px;}
   .controls + .controls{margin-top:10px;}
