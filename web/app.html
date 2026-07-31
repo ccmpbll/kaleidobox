@@ -144,14 +144,6 @@
 </div>
 
 <div class="section">
-  <h2>Display</h2>
-  <div class="controls">
-    <label>Brightness <input type="range" id="brightness" min="1" max="255" value="128">
-      <input type="number" id="brightnessNum" min="1" max="255" value="128" style="width:56px;"></label>
-  </div>
-</div>
-
-<div class="section">
   <h2>Kaleidoscope</h2>
   <p class="sub">Animates whatever's currently on the panel (drawn or uploaded).</p>
   <div class="controls">
@@ -159,35 +151,6 @@
     <label>Fold <input type="range" id="foldCount" min="2" max="32" value="8">
       <input type="number" id="foldCountNum" min="2" max="32" value="8" style="width:52px;"></label>
     <label><input type="checkbox" id="motionZoom"> Zoom</label>
-  </div>
-</div>
-
-<div class="section">
-  <h2>Clock</h2>
-  <p class="sub">Overlays the time on top of the running kaleidoscope.</p>
-  <div class="controls">
-    <label>Mode
-      <select id="clockMode">
-        <option value="off">Off</option>
-        <option value="outline">Outline</option>
-        <option value="default">Default</option>
-        <option value="seethrough">See-through</option>
-        <option value="rectangle">Rectangle</option>
-      </select>
-    </label>
-    <label>Color <input type="color" id="clockColor" value="#ffffff"></label>
-    <label>Size <input type="range" id="clockScale" min="1" max="2" value="2">
-      <input type="number" id="clockScaleNum" min="1" max="2" value="2" style="width:44px;"></label>
-    <label>Format
-      <select id="clock24h">
-        <option value="24">24h</option>
-        <option value="12">12h</option>
-      </select>
-    </label>
-  </div>
-  <div class="controls">
-    <label>NTP server <input type="text" id="ntpServer" value="pool.ntp.org" style="width:140px;"></label>
-    <label>Timezone <select id="clockTz"></select></label>
   </div>
 </div>
 
@@ -414,72 +377,6 @@
   }
   refreshCanvasPreview().catch(function () {});
 
-  var brightness = document.getElementById('brightness');
-  var brightnessNum = document.getElementById('brightnessNum');
-
-  function sendBrightness(value) {
-    return fetch('/api/brightness', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({brightness: value}),
-    });
-  }
-
-  // Unlike kaleidoscope's settings (which need a full restart to take
-  // effect, so those wait for 'change'/mouse-up), a brightness change
-  // is cheap enough to send live on every 'input' tick - but the naive
-  // version of that (fire-and-forget fetch() per tick) is exactly what
-  // made the setting "not always stick": a fast drag fires many
-  // overlapping requests, browsers open several parallel connections
-  // per host, and there's no guarantee they land on the device (and
-  // write NVS) in the same order they were sent - a slightly-stale
-  // request finishing last silently overwrites the real final value.
-  // Queueing here guarantees at most one in-flight request, always
-  // carrying the latest known value, so whichever one lands last is
-  // always correct regardless of network timing.
-  var brightnessTimer = null, brightnessInFlight = false,
-      brightnessDirty = false, brightnessLatest = null;
-
-  function queueBrightness(value) {
-    brightnessLatest = value;
-    brightnessDirty = true;
-    if (brightnessTimer) return;
-    brightnessTimer = setTimeout(flushBrightness, 80);
-  }
-
-  function flushBrightness() {
-    brightnessTimer = null;
-    if (brightnessInFlight || !brightnessDirty) return;
-    brightnessDirty = false;
-    brightnessInFlight = true;
-    sendBrightness(brightnessLatest).catch(function () {}).finally(function () {
-      brightnessInFlight = false;
-      // More ticks arrived while that request was in flight - send the
-      // latest value now instead of waiting for another debounce delay.
-      if (brightnessDirty) flushBrightness();
-    });
-  }
-
-  brightness.addEventListener('input', function () {
-    brightnessNum.value = brightness.value;
-    queueBrightness(parseInt(brightness.value, 10));
-  });
-  brightnessNum.addEventListener('input', function () {
-    var v = brightnessNum.value;
-    if (v !== '') { brightness.value = v; }
-  });
-  brightnessNum.addEventListener('change', function () {
-    var v = Math.max(1, Math.min(255, parseInt(brightnessNum.value, 10) || 1));
-    brightnessNum.value = v;
-    brightness.value = v;
-    queueBrightness(v);
-  });
-
-  fetch('/api/brightness').then(function (r) { return r.json(); }).then(function (s) {
-    brightness.value = s.brightness;
-    brightnessNum.value = s.brightness;
-  }).catch(function () {});
-
   var kaleidoToggle = document.getElementById('kaleidoToggle');
   var foldCount = document.getElementById('foldCount');
   var foldCountNum = document.getElementById('foldCountNum');
@@ -538,123 +435,6 @@
     motionZoom.checked = !!s.motion_zoom;
     kaleidoRunning = !!s.running;
     kaleidoToggle.textContent = kaleidoRunning ? 'Stop' : 'Start';
-  }).catch(function () {});
-
-  // Curated common zones, not the full ~400-entry IANA database (no
-  // such database exists on the device - see main/clock.c). Each entry
-  // maps a familiar name to the POSIX TZ string that actually gets
-  // sent; the device only ever sees/stores that string, never the
-  // label. Fine to extend this list later without touching firmware.
-  var TIMEZONES = [
-    ['UTC', 'UTC0'],
-    ['America/New_York', 'EST5EDT,M3.2.0,M11.1.0'],
-    ['America/Chicago', 'CST6CDT,M3.2.0,M11.1.0'],
-    ['America/Denver', 'MST7MDT,M3.2.0,M11.1.0'],
-    ['America/Phoenix', 'MST7'],
-    ['America/Los_Angeles', 'PST8PDT,M3.2.0,M11.1.0'],
-    ['America/Anchorage', 'AKST9AKDT,M3.2.0,M11.1.0'],
-    ['Pacific/Honolulu', 'HST10'],
-    ['America/Toronto', 'EST5EDT,M3.2.0,M11.1.0'],
-    ['America/Vancouver', 'PST8PDT,M3.2.0,M11.1.0'],
-    ['America/Mexico_City', 'CST6'],
-    ['America/Sao_Paulo', '<-03>3'],
-    ['Europe/London', 'GMT0BST,M3.5.0/1,M10.5.0'],
-    ['Europe/Paris', 'CET-1CEST,M3.5.0,M10.5.0/3'],
-    ['Europe/Berlin', 'CET-1CEST,M3.5.0,M10.5.0/3'],
-    ['Europe/Madrid', 'CET-1CEST,M3.5.0,M10.5.0/3'],
-    ['Europe/Rome', 'CET-1CEST,M3.5.0,M10.5.0/3'],
-    ['Europe/Athens', 'EET-2EEST,M3.5.0/3,M10.5.0/4'],
-    ['Europe/Helsinki', 'EET-2EEST,M3.5.0/3,M10.5.0/4'],
-    ['Europe/Moscow', 'MSK-3'],
-    ['Africa/Cairo', 'EET-2'],
-    ['Africa/Johannesburg', 'SAST-2'],
-    ['Africa/Lagos', 'WAT-1'],
-    ['Asia/Dubai', '<+04>-4'],
-    ['Asia/Karachi', 'PKT-5'],
-    ['Asia/Kolkata', 'IST-5:30'],
-    ['Asia/Dhaka', '<+06>-6'],
-    ['Asia/Bangkok', '<+07>-7'],
-    ['Asia/Shanghai', 'CST-8'],
-    ['Asia/Hong_Kong', 'HKT-8'],
-    ['Asia/Singapore', '<+08>-8'],
-    ['Asia/Tokyo', 'JST-9'],
-    ['Asia/Seoul', 'KST-9'],
-    ['Australia/Perth', 'AWST-8'],
-    ['Australia/Adelaide', 'ACST-9:30ACDT,M10.1.0,M4.1.0/3'],
-    ['Australia/Brisbane', 'AEST-10'],
-    ['Australia/Sydney', 'AEST-10AEDT,M10.1.0,M4.1.0/3'],
-    ['Pacific/Auckland', 'NZST-12NZDT,M9.5.0,M4.1.0/3']
-  ];
-
-  var clockMode = document.getElementById('clockMode');
-  var clockColor = document.getElementById('clockColor');
-  var clockScale = document.getElementById('clockScale');
-  var clockScaleNum = document.getElementById('clockScaleNum');
-  var clock24h = document.getElementById('clock24h');
-  var ntpServer = document.getElementById('ntpServer');
-  var clockTz = document.getElementById('clockTz');
-
-  TIMEZONES.forEach(function (tz) {
-    var opt = document.createElement('option');
-    opt.value = tz[1];
-    opt.textContent = tz[0];
-    clockTz.appendChild(opt);
-  });
-  // Nice-to-have, not load-bearing if it doesn't match anything in the
-  // curated list above (browser's zone just stays unselected, first
-  // entry shows instead - user can still pick manually).
-  try {
-    var browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    var match = TIMEZONES.filter(function (tz) { return tz[0] === browserTz; })[0];
-    if (match) { clockTz.value = match[1]; }
-  } catch (e) {}
-
-  function sendClockSettings() {
-    return fetch('/api/clock', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        mode: clockMode.value,
-        color: clockColor.value,
-        scale: parseInt(clockScale.value, 10),
-        '24h': clock24h.value === '24',
-        ntp_server: ntpServer.value,
-        timezone: clockTz.value,
-      }),
-    });
-  }
-  clockMode.addEventListener('change', function () { sendClockSettings().catch(function () {}); });
-  clockColor.addEventListener('change', function () { sendClockSettings().catch(function () {}); });
-  // Range and number mirror each other, same pattern as the fold-count
-  // control above - either one is the source of truth depending on
-  // which the user touched last.
-  clockScale.addEventListener('input', function () { clockScaleNum.value = clockScale.value; });
-  clockScaleNum.addEventListener('input', function () {
-    var v = clockScaleNum.value;
-    if (v !== '') { clockScale.value = v; }
-  });
-  clockScale.addEventListener('change', function () { sendClockSettings().catch(function () {}); });
-  clockScaleNum.addEventListener('change', function () {
-    var v = Math.max(1, Math.min(2, parseInt(clockScaleNum.value, 10) || 1));
-    clockScaleNum.value = v;
-    clockScale.value = v;
-    sendClockSettings().catch(function () {});
-  });
-  clock24h.addEventListener('change', function () { sendClockSettings().catch(function () {}); });
-  ntpServer.addEventListener('change', function () { sendClockSettings().catch(function () {}); });
-  clockTz.addEventListener('change', function () { sendClockSettings().catch(function () {}); });
-
-  fetch('/api/clock').then(function (r) { return r.json(); }).then(function (s) {
-    clockMode.value = s.mode;
-    clockColor.value = s.color;
-    clockScale.value = s.scale;
-    clockScaleNum.value = s.scale;
-    clock24h.value = s['24h'] ? '24' : '12';
-    ntpServer.value = s.ntp_server;
-    // Only overrides the Intl-based guess above if the device already
-    // has a real stored value (non-empty) - an empty/UTC default
-    // shouldn't clobber a reasonable browser-detected guess.
-    if (s.timezone) { clockTz.value = s.timezone; }
   }).catch(function () {});
 
   var galleryList = document.getElementById('galleryList');

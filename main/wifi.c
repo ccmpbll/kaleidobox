@@ -11,6 +11,8 @@
 #include "kaleidoscope.h"
 #include "matrix.h"
 #include "mdns.h"
+#include "panel_takeover.h"
+#include "printspy.h"
 #include "settings.h"
 #include "wifi_ap.h"
 #include <stdio.h>
@@ -166,6 +168,23 @@ static esp_timer_handle_t ip_display_timeout_timer = NULL;
 // clobber real content the same way the Clear-button bug did.
 static void ip_display_timeout_cb(void *arg) {
   (void)arg;
+
+  // This 10s timer is boot-sequence-only and predates panel_takeover.c
+  // (added later for PrintSpy/weather) - it has no idea a takeover
+  // might already be running, and was unconditionally reclaiming the
+  // panel + resuming kaleidoscope regardless. Confirmed live: a real
+  // print already running meant PrintSpy's takeover began around ~7s
+  // post-boot (right after MQTT connects and the retained message
+  // arrives), then THIS timer fired at the unrelated 10s-after-IP mark
+  // and stomped it - repushed the canvas and restarted kaleidoscope
+  // over whatever PrintSpy had just drawn, with PrintSpy's own state
+  // never told any of that happened. If something already owns the
+  // panel, skip entirely - it'll do its own canvas-restore/kaleidoscope-
+  // resume when its own takeover ends (see panel_takeover.c).
+  if (kaleidobox_panel_takeover_active()) {
+    return;
+  }
+
   kaleidobox_canvas_set_all(kaleidobox_canvas_buffer());
 
   // Resume kaleidoscope here, not at boot in main.c - both this whole
@@ -265,6 +284,9 @@ static void event_handler(void *arg, esp_event_base_t event_base,
       kaleidobox_clock_start_sntp();
       // Idempotent - only starts the HTTP server on first IP.
       kaleidobox_http_server_start();
+      // Idempotent - no-ops if already started, or if printspy_en is
+      // off / no broker is configured (see printspy.c).
+      kaleidobox_printspy_start();
       break;
     }
     default:

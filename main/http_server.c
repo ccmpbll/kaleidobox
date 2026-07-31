@@ -19,9 +19,11 @@
 #include "log.h"
 #include "matrix.h"
 #include "ota.h"
+#include "printspy.h"
 #include "sdcard.h"
 #include "settings.h"
 #include "version.h"
+#include "weather.h"
 #include "wifi.h"
 #include <ctype.h>
 #include <stdbool.h>
@@ -457,6 +459,7 @@ static esp_err_t ws_draw_handler(httpd_req_t *req) {
       };
       kaleidobox_kaleidoscope_update_source(&source);
     }
+    kaleidobox_canvas_mark_draw_activity();
   }
   cJSON_Delete(json);
   return ESP_OK;
@@ -511,6 +514,7 @@ static esp_err_t canvas_submit_post_handler(httpd_req_t *req) {
   // (racing the live DMA scan, visible as bright flickering pixels).
   kaleidobox_canvas_set_all(buf);
   free(buf);
+  kaleidobox_canvas_mark_draw_activity();
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_sendstr(req, "{\"ok\":true}");
@@ -696,11 +700,224 @@ static esp_err_t clock_post_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
+// --- PrintSpy (MQTT print-status takeover) ----------------------------------
+
+static esp_err_t printspy_get_handler(httpd_req_t *req) {
+  cJSON *root = cJSON_CreateObject();
+  cJSON_AddBoolToObject(root, "enabled", kaleidobox_nvs_get_printspy_enabled());
+  cJSON_AddStringToObject(root, "broker", kaleidobox_nvs_get_mqtt_broker());
+  cJSON_AddStringToObject(root, "user", kaleidobox_nvs_get_mqtt_user());
+  // Password is write-only - never echoed back, same reasoning as this
+  // device never echoing back the WiFi password. Just tells the UI
+  // whether one's already set, so a blank field on save doesn't read as
+  // "clear the password" when the user didn't touch it.
+  cJSON_AddBoolToObject(root, "pass_set", kaleidobox_nvs_get_mqtt_pass()[0] != '\0');
+  cJSON_AddStringToObject(root, "topic", kaleidobox_nvs_get_printspy_topic());
+
+  char *json = cJSON_PrintUnformatted(root);
+  httpd_resp_set_type(req, "application/json");
+  esp_err_t res = httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
+  free(json);
+  cJSON_Delete(root);
+  return res;
+}
+
+static esp_err_t printspy_post_handler(httpd_req_t *req) {
+  char *body = NULL;
+  if (read_body(req, &body) != ESP_OK) {
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  cJSON *json = cJSON_Parse(body);
+  free(body);
+  if (!json) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_sendstr(req, "Invalid JSON");
+    return ESP_FAIL;
+  }
+
+  cJSON *item = cJSON_GetObjectItem(json, "enabled");
+  if (cJSON_IsBool(item)) {
+    kaleidobox_nvs_set_printspy_enabled(cJSON_IsTrue(item));
+  }
+
+  item = cJSON_GetObjectItem(json, "broker");
+  if (cJSON_IsString(item)) {
+    kaleidobox_nvs_set_mqtt_broker(item->valuestring);
+  }
+
+  item = cJSON_GetObjectItem(json, "user");
+  if (cJSON_IsString(item)) {
+    kaleidobox_nvs_set_mqtt_user(item->valuestring);
+  }
+
+  // Blank/absent leaves the stored password untouched - see the GET
+  // handler's pass_set comment.
+  item = cJSON_GetObjectItem(json, "pass");
+  if (cJSON_IsString(item) && item->valuestring[0] != '\0') {
+    kaleidobox_nvs_set_mqtt_pass(item->valuestring);
+  }
+
+  item = cJSON_GetObjectItem(json, "topic");
+  if (cJSON_IsString(item) && item->valuestring[0] != '\0') {
+    kaleidobox_nvs_set_printspy_topic(item->valuestring);
+  }
+
+  cJSON_Delete(json);
+
+  // Apply immediately - stop() is a no-op if nothing's connected, and
+  // start() itself re-checks enabled/broker and no-ops if either isn't
+  // set. Together that means: turning "Enabled" off actually
+  // disconnects right now (not just "won't reconnect after the next
+  // reboot" - a real gap this used to have), and any broker/credential/
+  // topic edit reconnects fresh with the new values instead of waiting
+  // for the next boot.
+  kaleidobox_printspy_stop();
+  kaleidobox_printspy_start();
+
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_sendstr(req, "{\"ok\":true}");
+  return ESP_OK;
+}
+
+// --- Weather -----------------------------------------------------------------
+
+static esp_err_t weather_get_handler(httpd_req_t *req) {
+  cJSON *root = cJSON_CreateObject();
+  cJSON_AddBoolToObject(root, "enabled", kaleidobox_nvs_get_weather_enabled());
+  // Plain text, not write-only - user explicitly wants to see it in the
+  // UI rather than a masked/write-only field.
+  cJSON_AddStringToObject(root, "key", kaleidobox_nvs_get_ow_api_key());
+  cJSON_AddStringToObject(root, "zip", kaleidobox_nvs_get_weather_zip());
+  cJSON_AddStringToObject(root, "units",
+                          kaleidobox_nvs_get_weather_units() == 0 ? "metric" : "imperial");
+
+  uint16_t fields = kaleidobox_nvs_get_weather_fields();
+  cJSON *fields_obj = cJSON_AddObjectToObject(root, "fields");
+  cJSON_AddBoolToObject(fields_obj, "temp", fields & WEATHER_FIELD_TEMP);
+  cJSON_AddBoolToObject(fields_obj, "condition", fields & WEATHER_FIELD_CONDITION);
+  cJSON_AddBoolToObject(fields_obj, "humidity", fields & WEATHER_FIELD_HUMIDITY);
+  cJSON_AddBoolToObject(fields_obj, "wind", fields & WEATHER_FIELD_WIND);
+  cJSON_AddBoolToObject(fields_obj, "feels_like", fields & WEATHER_FIELD_FEELS_LIKE);
+  cJSON_AddBoolToObject(fields_obj, "high_low", fields & WEATHER_FIELD_HIGH_LOW);
+  cJSON_AddBoolToObject(fields_obj, "location", fields & WEATHER_FIELD_LOCATION);
+
+  char *json = cJSON_PrintUnformatted(root);
+  httpd_resp_set_type(req, "application/json");
+  esp_err_t res = httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
+  free(json);
+  cJSON_Delete(root);
+  return res;
+}
+
+static esp_err_t weather_post_handler(httpd_req_t *req) {
+  char *body = NULL;
+  if (read_body(req, &body) != ESP_OK) {
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  cJSON *json = cJSON_Parse(body);
+  free(body);
+  if (!json) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_sendstr(req, "Invalid JSON");
+    return ESP_FAIL;
+  }
+
+  cJSON *item = cJSON_GetObjectItem(json, "enabled");
+  if (cJSON_IsBool(item)) {
+    kaleidobox_nvs_set_weather_enabled(cJSON_IsTrue(item));
+  }
+
+  item = cJSON_GetObjectItem(json, "key");
+  if (cJSON_IsString(item)) {
+    kaleidobox_nvs_set_ow_api_key(item->valuestring);
+  }
+
+  item = cJSON_GetObjectItem(json, "zip");
+  if (cJSON_IsString(item)) {
+    kaleidobox_nvs_set_weather_zip(item->valuestring);
+  }
+
+  item = cJSON_GetObjectItem(json, "units");
+  if (cJSON_IsString(item)) {
+    kaleidobox_nvs_set_weather_units(strcmp(item->valuestring, "metric") == 0 ? 0 : 1);
+  }
+
+  item = cJSON_GetObjectItem(json, "fields");
+  if (cJSON_IsObject(item)) {
+    uint16_t fields = 0;
+    if (cJSON_IsTrue(cJSON_GetObjectItem(item, "temp"))) fields |= WEATHER_FIELD_TEMP;
+    if (cJSON_IsTrue(cJSON_GetObjectItem(item, "condition"))) fields |= WEATHER_FIELD_CONDITION;
+    if (cJSON_IsTrue(cJSON_GetObjectItem(item, "humidity"))) fields |= WEATHER_FIELD_HUMIDITY;
+    if (cJSON_IsTrue(cJSON_GetObjectItem(item, "wind"))) fields |= WEATHER_FIELD_WIND;
+    if (cJSON_IsTrue(cJSON_GetObjectItem(item, "feels_like"))) fields |= WEATHER_FIELD_FEELS_LIKE;
+    if (cJSON_IsTrue(cJSON_GetObjectItem(item, "high_low"))) fields |= WEATHER_FIELD_HIGH_LOW;
+    if (cJSON_IsTrue(cJSON_GetObjectItem(item, "location"))) fields |= WEATHER_FIELD_LOCATION;
+    kaleidobox_nvs_set_weather_fields(fields);
+  }
+
+  cJSON_Delete(json);
+
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_sendstr(req, "{\"ok\":true}");
+  return ESP_OK;
+}
+
+// --- Display rotation --------------------------------------------------------
+// See main/display_rotation.c - clock/printer/weather all share this one
+// interval, so it lives in its own small endpoint rather than under any
+// one of those three feature endpoints.
+
+static esp_err_t rotation_get_handler(httpd_req_t *req) {
+  cJSON *root = cJSON_CreateObject();
+  cJSON_AddNumberToObject(root, "rotate_secs", kaleidobox_nvs_get_rotate_secs());
+
+  char *json = cJSON_PrintUnformatted(root);
+  httpd_resp_set_type(req, "application/json");
+  esp_err_t res = httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
+  free(json);
+  cJSON_Delete(root);
+  return res;
+}
+
+static esp_err_t rotation_post_handler(httpd_req_t *req) {
+  char *body = NULL;
+  if (read_body(req, &body) != ESP_OK) {
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  cJSON *json = cJSON_Parse(body);
+  free(body);
+  if (!json) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_sendstr(req, "Invalid JSON");
+    return ESP_FAIL;
+  }
+
+  cJSON *item = cJSON_GetObjectItem(json, "rotate_secs");
+  if (cJSON_IsNumber(item) && item->valueint >= 0 && item->valueint <= 300) {
+    kaleidobox_nvs_set_rotate_secs((uint16_t)item->valueint);
+  }
+  cJSON_Delete(json);
+
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_sendstr(req, "{\"ok\":true}");
+  return ESP_OK;
+}
+
 // --- Brightness ------------------------------------------------------------
 
 static esp_err_t brightness_get_handler(httpd_req_t *req) {
   cJSON *root = cJSON_CreateObject();
   cJSON_AddNumberToObject(root, "brightness", kaleidobox_nvs_get_brightness());
+  cJSON_AddBoolToObject(root, "schedule_enabled",
+                        kaleidobox_nvs_get_brightness_schedule_enabled());
+  cJSON_AddNumberToObject(root, "dim_hour", kaleidobox_nvs_get_dim_hour());
+  cJSON_AddNumberToObject(root, "dim_min", kaleidobox_nvs_get_dim_min());
+  cJSON_AddNumberToObject(root, "dim_brightness", kaleidobox_nvs_get_dim_brightness());
+  cJSON_AddNumberToObject(root, "bright_hour", kaleidobox_nvs_get_bright_hour());
+  cJSON_AddNumberToObject(root, "bright_min", kaleidobox_nvs_get_bright_min());
 
   char *json = cJSON_PrintUnformatted(root);
   httpd_resp_set_type(req, "application/json");
@@ -729,6 +946,31 @@ static esp_err_t brightness_post_handler(httpd_req_t *req) {
     uint8_t brightness = (uint8_t)item->valueint;
     kaleidobox_nvs_set_brightness(brightness);
     kaleidobox_matrix_set_brightness(brightness);
+  }
+
+  item = cJSON_GetObjectItem(json, "schedule_enabled");
+  if (cJSON_IsBool(item)) {
+    kaleidobox_nvs_set_brightness_schedule_enabled(cJSON_IsTrue(item));
+  }
+  item = cJSON_GetObjectItem(json, "dim_hour");
+  if (cJSON_IsNumber(item) && item->valueint >= 0 && item->valueint <= 23) {
+    kaleidobox_nvs_set_dim_hour((uint8_t)item->valueint);
+  }
+  item = cJSON_GetObjectItem(json, "dim_min");
+  if (cJSON_IsNumber(item) && item->valueint >= 0 && item->valueint <= 59) {
+    kaleidobox_nvs_set_dim_min((uint8_t)item->valueint);
+  }
+  item = cJSON_GetObjectItem(json, "dim_brightness");
+  if (cJSON_IsNumber(item) && item->valueint >= 0 && item->valueint <= 255) {
+    kaleidobox_nvs_set_dim_brightness((uint8_t)item->valueint);
+  }
+  item = cJSON_GetObjectItem(json, "bright_hour");
+  if (cJSON_IsNumber(item) && item->valueint >= 0 && item->valueint <= 23) {
+    kaleidobox_nvs_set_bright_hour((uint8_t)item->valueint);
+  }
+  item = cJSON_GetObjectItem(json, "bright_min");
+  if (cJSON_IsNumber(item) && item->valueint >= 0 && item->valueint <= 59) {
+    kaleidobox_nvs_set_bright_min((uint8_t)item->valueint);
   }
   cJSON_Delete(json);
 
@@ -1047,11 +1289,11 @@ esp_err_t kaleidobox_http_server_start(void) {
   config.stack_size = 8192;
   // Default max_uri_handlers is 8 - we register more than that (root,
   // settings page, logo, icon, status, logs, wifi, ota, ws/draw, canvas
-  // get/submit, kaleidoscope x2, clock x2, brightness x2, gallery x10).
-  // Past the cap, httpd_register_uri_handler silently drops the excess -
-  // printspy-cam hit this exact bug once already (see its
-  // http_server.c comment).
-  config.max_uri_handlers = 27;
+  // get/submit, kaleidoscope x2, clock x2, brightness x2, gallery x10,
+  // printspy x2, weather x2, rotation x2). Past the cap,
+  // httpd_register_uri_handler silently drops the excess - printspy-cam
+  // hit this exact bug once already (see its http_server.c comment).
+  config.max_uri_handlers = 33;
   config.max_open_sockets = LOG_WORKER_COUNT + 6;
   config.lru_purge_enable = true;
   // Same reasoning as printspy-cam: without TCP keepalive, a stale
@@ -1107,6 +1349,22 @@ esp_err_t kaleidobox_http_server_start(void) {
       .uri = "/api/clock", .method = HTTP_GET, .handler = clock_get_handler};
   httpd_uri_t clock_post_uri = {
       .uri = "/api/clock", .method = HTTP_POST, .handler = clock_post_handler};
+  httpd_uri_t printspy_get_uri = {.uri = "/api/printspy",
+                                  .method = HTTP_GET,
+                                  .handler = printspy_get_handler};
+  httpd_uri_t printspy_post_uri = {.uri = "/api/printspy",
+                                   .method = HTTP_POST,
+                                   .handler = printspy_post_handler};
+  httpd_uri_t weather_get_uri = {
+      .uri = "/api/weather", .method = HTTP_GET, .handler = weather_get_handler};
+  httpd_uri_t weather_post_uri = {.uri = "/api/weather",
+                                  .method = HTTP_POST,
+                                  .handler = weather_post_handler};
+  httpd_uri_t rotation_get_uri = {
+      .uri = "/api/rotation", .method = HTTP_GET, .handler = rotation_get_handler};
+  httpd_uri_t rotation_post_uri = {.uri = "/api/rotation",
+                                   .method = HTTP_POST,
+                                   .handler = rotation_post_handler};
   httpd_uri_t brightness_get_uri = {.uri = "/api/brightness",
                                     .method = HTTP_GET,
                                     .handler = brightness_get_handler};
@@ -1158,6 +1416,12 @@ esp_err_t kaleidobox_http_server_start(void) {
   httpd_register_uri_handler(server, &kaleidoscope_post_uri);
   httpd_register_uri_handler(server, &clock_get_uri);
   httpd_register_uri_handler(server, &clock_post_uri);
+  httpd_register_uri_handler(server, &printspy_get_uri);
+  httpd_register_uri_handler(server, &printspy_post_uri);
+  httpd_register_uri_handler(server, &weather_get_uri);
+  httpd_register_uri_handler(server, &weather_post_uri);
+  httpd_register_uri_handler(server, &rotation_get_uri);
+  httpd_register_uri_handler(server, &rotation_post_uri);
   httpd_register_uri_handler(server, &brightness_get_uri);
   httpd_register_uri_handler(server, &brightness_post_uri);
   httpd_register_uri_handler(server, &gallery_get_uri);

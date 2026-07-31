@@ -19,3 +19,13 @@ CONFIG_SPIRAM=y
 # actual distinguishing feature vs WROOM-1, which is quad-only). No
 # ambiguity here the way there was for board_pins.h's GPIO numbers.
 CONFIG_SPIRAM_MODE_OCT=y
+# mbedTLS defaults to allocating everything (TLS session buffers, the
+# 200-cert bundle) from internal RAM - a small pool shared with WiFi,
+# the HUB75 matrix DMA buffers, and SDMMC's DMA-capable reads. First
+# real HTTPS client in this firmware (weather.c) exhausted it: TLS
+# handshakes failed with mbedtls_ssl_setup returning
+# MBEDTLS_ERR_SSL_ALLOC_FAILED (-0x7F00), and an SD-card read failed
+# with "not enough mem" at nearly the same moment - confirmed live,
+# same underlying pool. 16MB of PSRAM is sitting right there and
+# SPIRAM_USE_MALLOC is already on; just point mbedTLS at it.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y

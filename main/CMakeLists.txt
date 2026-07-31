@@ -16,6 +16,11 @@ idf_component_register(
     "gallery.c"
     "font_5x7.c"
     "clock.c"
+    "panel_takeover.c"
+    "printspy.c"
+    "weather.c"
+    "display_rotation.c"
+    "brightness_schedule.c"
   INCLUDE_DIRS
     "."
   EMBED_TXTFILES
@@ -29,6 +34,7 @@ idf_component_register(
     bootloader_support
     driver
     esp_driver_sdmmc
+    esp_http_client
     esp_http_server
     esp_netif
     esp_partition
@@ -43,6 +49,7 @@ idf_component_register(
     log
     lwip
     mdns
+    mqtt
     nvs_flash
     sdmmc
 )

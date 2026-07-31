@@ -1,5 +1,6 @@
 #include "gallery.h"
 
+#include "brightness_schedule.h"
 #include "canvas.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -116,12 +117,23 @@ static void gallery_bg_task(void *arg) {
   uint32_t elapsed_s = 0;
   while (1) {
     vTaskDelay(pdMS_TO_TICKS(BG_TICK_MS));
+
+    // Piggybacks on this task's existing always-on 1s tick rather than
+    // getting its own dedicated task - a once-a-minute schedule check
+    // doesn't need one when this is already running regardless of mode.
+    kaleidobox_brightness_schedule_tick();
+
     if (!kaleidobox_sdcard_is_mounted()) {
       continue;
     }
 
-    if (kaleidobox_canvas_take_dirty()) {
-      save_bytes_to(STATE_PATH, kaleidobox_canvas_buffer());
+    if (kaleidobox_canvas_is_dirty()) {
+      if (save_bytes_to(STATE_PATH, kaleidobox_canvas_buffer()) == ESP_OK) {
+        kaleidobox_canvas_clear_dirty();
+      }
+      // Failure (e.g. a transient SD DMA allocation failure under
+      // memory pressure) leaves dirty set, so this just retries next
+      // tick instead of silently losing the pending autosave.
     }
 
     if (kaleidobox_nvs_get_gallery_auto_advance()) {

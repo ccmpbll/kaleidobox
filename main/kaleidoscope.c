@@ -45,6 +45,8 @@ static SemaphoreHandle_t g_source_mutex = NULL;
 static float g_pixel_angle[CANVAS_WIDTH * CANVAS_HEIGHT];
 static float g_pixel_radius[CANVAS_WIDTH * CANVAS_HEIGHT];
 
+static void stop_task(void); // defined below - used by start()'s clean-restart path above its own definition
+
 static void precompute_pixel_tables(uint8_t fold_count) {
   float cx = (CANVAS_WIDTH - 1) / 2.0f;
   float cy = (CANVAS_HEIGHT - 1) / 2.0f;
@@ -200,7 +202,7 @@ esp_err_t kaleidobox_kaleidoscope_start(const kaleidobox_image_t *source) {
     return ESP_ERR_INVALID_ARG;
   }
 
-  kaleidobox_kaleidoscope_stop(); // clean restart if already running
+  stop_task(); // clean restart if already running - about to set the NVS flag true below anyway
 
   // Deep copy - the caller's buffer (e.g. a stack kaleidobox_image_t
   // wrapping the canvas buffer) isn't guaranteed to outlive this call,
@@ -275,7 +277,7 @@ esp_err_t kaleidobox_kaleidoscope_update_source(const kaleidobox_image_t *source
   return ESP_OK;
 }
 
-void kaleidobox_kaleidoscope_stop(void) {
+static void stop_task(void) {
   if (!g_task) {
     return;
   }
@@ -290,7 +292,13 @@ void kaleidobox_kaleidoscope_stop(void) {
   // to the original image instead of freezing on the last animated
   // frame.
   kaleidobox_canvas_set_all(kaleidobox_canvas_buffer());
+}
+
+void kaleidobox_kaleidoscope_stop(void) {
+  stop_task();
   kaleidobox_nvs_set_kaleido_running(false);
 }
+
+void kaleidobox_kaleidoscope_stop_transient(void) { stop_task(); }
 
 bool kaleidobox_kaleidoscope_is_running(void) { return g_task != NULL; }

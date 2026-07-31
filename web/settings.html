@@ -7,9 +7,7 @@
 <style>
   /* Shared look with app.html - pages can't share a stylesheet file
      today (both are single embedded HTML blobs), so this block is a
-     deliberate duplicate of the relevant subset of app.html's <style>,
-     trimmed of selectors this page has no elements for (canvas, color
-     swatch, gallery grid). */
+     deliberate duplicate of the relevant subset of app.html's <style>. */
   body{margin:0 auto;padding:16px;max-width:560px;box-sizing:border-box;
     background:rgb(18,18,20);color:rgb(230,230,232);
     font-family:-apple-system,BlinkMacSystemFont,
@@ -26,6 +24,15 @@
   .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;
     max-width:512px;}
   .controls + .controls{margin-top:10px;}
+  .controls label{display:flex;align-items:center;gap:6px;font-size:.85rem;}
+  input[type=color]{width:44px;height:36px;padding:2px;border:1px solid
+    rgb(60,60,68);border-radius:6px;background:rgb(28,28,32);}
+  input[type=text],input[type=number],input[type=password],select{
+    padding:8px 10px;border:1px solid rgb(60,60,68);border-radius:6px;
+    font-size:.9rem;min-width:0;flex:1;
+    background:rgb(28,28,32);color:rgb(230,230,232);}
+  input[type=number]{flex:none;}
+  select{flex:none;}
   button{padding:10px 16px;border:none;border-radius:6px;
     background:linear-gradient(217deg,#4c6ef5,#22b8cf);color:#fff;
     font-size:.9rem;font-weight:600;cursor:pointer;}
@@ -50,11 +57,124 @@
   <h1>Settings</h1>
   <a class="back" href="/">&larr; Back to panel</a>
 </div>
-<p class="sub">Status and firmware updates.</p>
+<p class="sub">Status, display, and firmware updates.</p>
 
 <div class="section">
   <h2>Status</h2>
   <p id="status">Loading status&hellip;</p>
+</div>
+
+<div class="section">
+  <h2>Display</h2>
+  <div class="controls">
+    <label>Brightness <input type="range" id="brightness" min="1" max="255" value="128">
+      <input type="number" id="brightnessNum" min="1" max="255" value="128" style="width:56px;"></label>
+  </div>
+  <div class="controls">
+    <label><input type="checkbox" id="schedEnabled"> Dim on a schedule</label>
+  </div>
+  <div class="controls">
+    <label>Dim at
+      <input type="number" id="dimHour" min="0" max="23" style="width:40px;">:<input type="number" id="dimMin" min="0" max="59" style="width:40px;">
+    </label>
+    <label>to <input type="number" id="dimBrightness" min="0" max="255" style="width:56px;"></label>
+  </div>
+  <div class="controls">
+    <label>Brighten at
+      <input type="number" id="brightHour" min="0" max="23" style="width:40px;">:<input type="number" id="brightMin" min="0" max="59" style="width:40px;">
+    </label>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Clock</h2>
+  <p class="sub">Overlays the time on top of the running kaleidoscope.</p>
+  <div class="controls">
+    <label>Mode
+      <select id="clockMode">
+        <option value="off">Off</option>
+        <option value="outline">Outline</option>
+        <option value="default">Default</option>
+        <option value="seethrough">See-through</option>
+        <option value="rectangle">Rectangle</option>
+      </select>
+    </label>
+    <label>Color <input type="color" id="clockColor" value="#ffffff"></label>
+    <label>Size <input type="range" id="clockScale" min="1" max="2" value="2">
+      <input type="number" id="clockScaleNum" min="1" max="2" value="2" style="width:44px;"></label>
+    <label>Format
+      <select id="clock24h">
+        <option value="24">24h</option>
+        <option value="12">12h</option>
+      </select>
+    </label>
+  </div>
+  <div class="controls">
+    <label>NTP server <input type="text" id="ntpServer" value="pool.ntp.org" style="width:140px;"></label>
+    <label>Timezone <select id="clockTz"></select></label>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Weather</h2>
+  <p class="sub">Periodically takes over the panel to show current weather, then reverts.</p>
+  <div class="controls">
+    <label><input type="checkbox" id="weatherEnabled"> Enabled</label>
+    <label>Units
+      <select id="weatherUnits">
+        <option value="imperial">&deg;F</option>
+        <option value="metric">&deg;C</option>
+      </select>
+    </label>
+  </div>
+  <div class="controls">
+    <label style="flex-direction:column;align-items:stretch;">OpenWeather API key
+      <input type="text" id="weatherKey" placeholder="OpenWeatherMap key" style="width:100%;box-sizing:border-box;">
+    </label>
+  </div>
+  <div class="controls">
+    <label>ZIP code <input type="text" id="weatherZip" placeholder="29621" style="width:100px;"></label>
+  </div>
+  <div class="controls">
+    <label><input type="checkbox" id="weatherFieldLocation"> Location</label>
+    <label><input type="checkbox" id="weatherFieldTemp"> Temp</label>
+    <label><input type="checkbox" id="weatherFieldCondition"> Condition</label>
+    <label><input type="checkbox" id="weatherFieldFeelsLike"> Feels like</label>
+    <label><input type="checkbox" id="weatherFieldHighLow"> High/low</label>
+    <label><input type="checkbox" id="weatherFieldHumidity"> Humidity</label>
+    <label><input type="checkbox" id="weatherFieldWind"> Wind</label>
+  </div>
+</div>
+
+<div class="section">
+  <h2>PrintSpy</h2>
+  <p class="sub">Shows print progress on the panel while a print is running, pushed over MQTT from PrintSpy.</p>
+  <div class="controls">
+    <label><input type="checkbox" id="psEnabled"> Enabled</label>
+  </div>
+  <div class="controls">
+    <label>Broker URI <input type="text" id="psBroker" placeholder="mqtt://host:1883" style="width:200px;"></label>
+  </div>
+  <div class="controls">
+    <label>Username <input type="text" id="psUser" style="width:140px;"></label>
+    <label>Password <input type="password" id="psPass" style="width:140px;"></label>
+  </div>
+  <div class="controls">
+    <label>Topic <input type="text" id="psTopic" style="width:220px;"></label>
+  </div>
+  <div class="controls">
+    <button id="psSave">Save</button>
+  </div>
+  <p id="psResult" class="result"></p>
+</div>
+
+<div class="section">
+  <h2>Display Rotation</h2>
+  <p class="sub">The panel cycles clock &rarr; any printer currently printing &rarr; weather (if enabled) &rarr; clock again, spending this long on each.</p>
+  <div class="controls">
+    <label>Show each screen for <input type="number" id="rotateSecs" min="0" max="300" style="width:60px;"> sec (0 = off)</label>
+  </div>
+  <p id="rotationResult" class="result"></p>
 </div>
 
 <div class="section">
@@ -75,6 +195,328 @@
       ' - up ' + s.uptime_seconds + 's';
   }).catch(function () {
     document.getElementById('status').textContent = 'Status unavailable';
+  });
+
+  var brightness = document.getElementById('brightness');
+  var brightnessNum = document.getElementById('brightnessNum');
+
+  function sendBrightness(value) {
+    return fetch('/api/brightness', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({brightness: value}),
+    });
+  }
+
+  // Unlike kaleidoscope's settings (which need a full restart to take
+  // effect, so those wait for 'change'/mouse-up), a brightness change
+  // is cheap enough to send live on every 'input' tick - but the naive
+  // version of that (fire-and-forget fetch() per tick) is exactly what
+  // made the setting "not always stick": a fast drag fires many
+  // overlapping requests, browsers open several parallel connections
+  // per host, and there's no guarantee they land on the device (and
+  // write NVS) in the same order they were sent - a slightly-stale
+  // request finishing last silently overwrites the real final value.
+  // Queueing here guarantees at most one in-flight request, always
+  // carrying the latest known value, so whichever one lands last is
+  // always correct regardless of network timing.
+  var brightnessTimer = null, brightnessInFlight = false,
+      brightnessDirty = false, brightnessLatest = null;
+
+  function queueBrightness(value) {
+    brightnessLatest = value;
+    brightnessDirty = true;
+    if (brightnessTimer) return;
+    brightnessTimer = setTimeout(flushBrightness, 80);
+  }
+
+  function flushBrightness() {
+    brightnessTimer = null;
+    if (brightnessInFlight || !brightnessDirty) return;
+    brightnessDirty = false;
+    brightnessInFlight = true;
+    sendBrightness(brightnessLatest).catch(function () {}).finally(function () {
+      brightnessInFlight = false;
+      if (brightnessDirty) flushBrightness();
+    });
+  }
+
+  brightness.addEventListener('input', function () {
+    brightnessNum.value = brightness.value;
+    queueBrightness(parseInt(brightness.value, 10));
+  });
+  brightnessNum.addEventListener('input', function () {
+    var v = brightnessNum.value;
+    if (v !== '') { brightness.value = v; }
+  });
+  brightnessNum.addEventListener('change', function () {
+    var v = Math.max(1, Math.min(255, parseInt(brightnessNum.value, 10) || 1));
+    brightnessNum.value = v;
+    brightness.value = v;
+    queueBrightness(v);
+  });
+
+  var schedEnabled = document.getElementById('schedEnabled');
+  var dimHour = document.getElementById('dimHour');
+  var dimMin = document.getElementById('dimMin');
+  var dimBrightness = document.getElementById('dimBrightness');
+  var brightHour = document.getElementById('brightHour');
+  var brightMin = document.getElementById('brightMin');
+
+  function sendBrightnessSchedule() {
+    return fetch('/api/brightness', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        schedule_enabled: schedEnabled.checked,
+        dim_hour: parseInt(dimHour.value, 10),
+        dim_min: parseInt(dimMin.value, 10),
+        dim_brightness: parseInt(dimBrightness.value, 10),
+        bright_hour: parseInt(brightHour.value, 10),
+        bright_min: parseInt(brightMin.value, 10),
+      }),
+    });
+  }
+  [schedEnabled, dimHour, dimMin, dimBrightness, brightHour, brightMin].forEach(function (el) {
+    el.addEventListener('change', function () { sendBrightnessSchedule().catch(function () {}); });
+  });
+
+  fetch('/api/brightness').then(function (r) { return r.json(); }).then(function (s) {
+    brightness.value = s.brightness;
+    brightnessNum.value = s.brightness;
+    schedEnabled.checked = s.schedule_enabled;
+    dimHour.value = s.dim_hour;
+    dimMin.value = s.dim_min;
+    dimBrightness.value = s.dim_brightness;
+    brightHour.value = s.bright_hour;
+    brightMin.value = s.bright_min;
+  }).catch(function () {});
+
+  // Curated common zones, not the full ~400-entry IANA database (no
+  // such database exists on the device - see main/clock.c). Each entry
+  // maps a familiar name to the POSIX TZ string that actually gets
+  // sent; the device only ever sees/stores that string, never the
+  // label. Fine to extend this list later without touching firmware.
+  var TIMEZONES = [
+    ['UTC', 'UTC0'],
+    ['America/New_York', 'EST5EDT,M3.2.0,M11.1.0'],
+    ['America/Chicago', 'CST6CDT,M3.2.0,M11.1.0'],
+    ['America/Denver', 'MST7MDT,M3.2.0,M11.1.0'],
+    ['America/Phoenix', 'MST7'],
+    ['America/Los_Angeles', 'PST8PDT,M3.2.0,M11.1.0'],
+    ['America/Anchorage', 'AKST9AKDT,M3.2.0,M11.1.0'],
+    ['Pacific/Honolulu', 'HST10'],
+    ['America/Toronto', 'EST5EDT,M3.2.0,M11.1.0'],
+    ['America/Vancouver', 'PST8PDT,M3.2.0,M11.1.0'],
+    ['America/Mexico_City', 'CST6'],
+    ['America/Sao_Paulo', '<-03>3'],
+    ['Europe/London', 'GMT0BST,M3.5.0/1,M10.5.0'],
+    ['Europe/Paris', 'CET-1CEST,M3.5.0,M10.5.0/3'],
+    ['Europe/Berlin', 'CET-1CEST,M3.5.0,M10.5.0/3'],
+    ['Europe/Madrid', 'CET-1CEST,M3.5.0,M10.5.0/3'],
+    ['Europe/Rome', 'CET-1CEST,M3.5.0,M10.5.0/3'],
+    ['Europe/Athens', 'EET-2EEST,M3.5.0/3,M10.5.0/4'],
+    ['Europe/Helsinki', 'EET-2EEST,M3.5.0/3,M10.5.0/4'],
+    ['Europe/Moscow', 'MSK-3'],
+    ['Africa/Cairo', 'EET-2'],
+    ['Africa/Johannesburg', 'SAST-2'],
+    ['Africa/Lagos', 'WAT-1'],
+    ['Asia/Dubai', '<+04>-4'],
+    ['Asia/Karachi', 'PKT-5'],
+    ['Asia/Kolkata', 'IST-5:30'],
+    ['Asia/Dhaka', '<+06>-6'],
+    ['Asia/Bangkok', '<+07>-7'],
+    ['Asia/Shanghai', 'CST-8'],
+    ['Asia/Hong_Kong', 'HKT-8'],
+    ['Asia/Singapore', '<+08>-8'],
+    ['Asia/Tokyo', 'JST-9'],
+    ['Asia/Seoul', 'KST-9'],
+    ['Australia/Perth', 'AWST-8'],
+    ['Australia/Adelaide', 'ACST-9:30ACDT,M10.1.0,M4.1.0/3'],
+    ['Australia/Brisbane', 'AEST-10'],
+    ['Australia/Sydney', 'AEST-10AEDT,M10.1.0,M4.1.0/3'],
+    ['Pacific/Auckland', 'NZST-12NZDT,M9.5.0,M4.1.0/3']
+  ];
+
+  var clockMode = document.getElementById('clockMode');
+  var clockColor = document.getElementById('clockColor');
+  var clockScale = document.getElementById('clockScale');
+  var clockScaleNum = document.getElementById('clockScaleNum');
+  var clock24h = document.getElementById('clock24h');
+  var ntpServer = document.getElementById('ntpServer');
+  var clockTz = document.getElementById('clockTz');
+
+  TIMEZONES.forEach(function (tz) {
+    var opt = document.createElement('option');
+    opt.value = tz[1];
+    opt.textContent = tz[0];
+    clockTz.appendChild(opt);
+  });
+  try {
+    var browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    var match = TIMEZONES.filter(function (tz) { return tz[0] === browserTz; })[0];
+    if (match) { clockTz.value = match[1]; }
+  } catch (e) {}
+
+  function sendClockSettings() {
+    return fetch('/api/clock', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        mode: clockMode.value,
+        color: clockColor.value,
+        scale: parseInt(clockScale.value, 10),
+        '24h': clock24h.value === '24',
+        ntp_server: ntpServer.value,
+        timezone: clockTz.value,
+      }),
+    });
+  }
+  clockMode.addEventListener('change', function () { sendClockSettings().catch(function () {}); });
+  clockColor.addEventListener('change', function () { sendClockSettings().catch(function () {}); });
+  clockScale.addEventListener('input', function () { clockScaleNum.value = clockScale.value; });
+  clockScaleNum.addEventListener('input', function () {
+    var v = clockScaleNum.value;
+    if (v !== '') { clockScale.value = v; }
+  });
+  clockScale.addEventListener('change', function () { sendClockSettings().catch(function () {}); });
+  clockScaleNum.addEventListener('change', function () {
+    var v = Math.max(1, Math.min(2, parseInt(clockScaleNum.value, 10) || 1));
+    clockScaleNum.value = v;
+    clockScale.value = v;
+    sendClockSettings().catch(function () {});
+  });
+  clock24h.addEventListener('change', function () { sendClockSettings().catch(function () {}); });
+  ntpServer.addEventListener('change', function () { sendClockSettings().catch(function () {}); });
+  clockTz.addEventListener('change', function () { sendClockSettings().catch(function () {}); });
+
+  fetch('/api/clock').then(function (r) { return r.json(); }).then(function (s) {
+    clockMode.value = s.mode;
+    clockColor.value = s.color;
+    clockScale.value = s.scale;
+    clockScaleNum.value = s.scale;
+    clock24h.value = s['24h'] ? '24' : '12';
+    ntpServer.value = s.ntp_server;
+    if (s.timezone) { clockTz.value = s.timezone; }
+  }).catch(function () {});
+
+  var weatherEnabled = document.getElementById('weatherEnabled');
+  var weatherUnits = document.getElementById('weatherUnits');
+  var weatherZip = document.getElementById('weatherZip');
+  var weatherKey = document.getElementById('weatherKey');
+  var weatherFieldLocation = document.getElementById('weatherFieldLocation');
+  var weatherFieldTemp = document.getElementById('weatherFieldTemp');
+  var weatherFieldCondition = document.getElementById('weatherFieldCondition');
+  var weatherFieldFeelsLike = document.getElementById('weatherFieldFeelsLike');
+  var weatherFieldHighLow = document.getElementById('weatherFieldHighLow');
+  var weatherFieldHumidity = document.getElementById('weatherFieldHumidity');
+  var weatherFieldWind = document.getElementById('weatherFieldWind');
+
+  function sendWeatherSettings() {
+    return fetch('/api/weather', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        enabled: weatherEnabled.checked,
+        zip: weatherZip.value,
+        key: weatherKey.value,
+        units: weatherUnits.value,
+        fields: {
+          location: weatherFieldLocation.checked,
+          temp: weatherFieldTemp.checked,
+          condition: weatherFieldCondition.checked,
+          feels_like: weatherFieldFeelsLike.checked,
+          high_low: weatherFieldHighLow.checked,
+          humidity: weatherFieldHumidity.checked,
+          wind: weatherFieldWind.checked,
+        },
+      }),
+    });
+  }
+  [weatherEnabled, weatherUnits, weatherZip, weatherKey, weatherFieldLocation,
+   weatherFieldTemp, weatherFieldCondition, weatherFieldFeelsLike,
+   weatherFieldHighLow, weatherFieldHumidity, weatherFieldWind].forEach(function (el) {
+    el.addEventListener('change', function () { sendWeatherSettings().catch(function () {}); });
+  });
+
+  fetch('/api/weather').then(function (r) { return r.json(); }).then(function (s) {
+    weatherEnabled.checked = s.enabled;
+    weatherUnits.value = s.units;
+    weatherZip.value = s.zip;
+    weatherKey.value = s.key;
+    weatherFieldLocation.checked = s.fields.location;
+    weatherFieldTemp.checked = s.fields.temp;
+    weatherFieldCondition.checked = s.fields.condition;
+    weatherFieldFeelsLike.checked = s.fields.feels_like;
+    weatherFieldHighLow.checked = s.fields.high_low;
+    weatherFieldHumidity.checked = s.fields.humidity;
+    weatherFieldWind.checked = s.fields.wind;
+  }).catch(function () {});
+
+  var psEnabled = document.getElementById('psEnabled');
+  var psBroker = document.getElementById('psBroker');
+  var psUser = document.getElementById('psUser');
+  var psPass = document.getElementById('psPass');
+  var psTopic = document.getElementById('psTopic');
+  var psSave = document.getElementById('psSave');
+  var psResult = document.getElementById('psResult');
+
+  // Password stays write-only (never sent back by the server) - shown
+  // as a fixed run of dots when one's set, genuinely empty when it's
+  // not, instead of a "(unchanged)" placeholder that reads as text
+  // rather than a real value. PASS_DOTS is a sentinel: leaving it
+  // untouched on save means "don't change the stored password."
+  var PASS_DOTS = '••••••••';
+
+  fetch('/api/printspy').then(function (r) { return r.json(); }).then(function (s) {
+    psEnabled.checked = s.enabled;
+    psBroker.value = s.broker;
+    psUser.value = s.user;
+    psPass.value = s.pass_set ? PASS_DOTS : '';
+    psTopic.value = s.topic;
+  }).catch(function () {});
+
+  psSave.addEventListener('click', function () {
+    // Leaving the dots (or a blank field) means "leave it as-is"
+    // server-side - never send the sentinel itself as a literal new
+    // password, and never send an empty string over "pass" unless the
+    // user actually cleared a real password, so a from-scratch save
+    // doesn't accidentally wipe a previously-set one.
+    var body = {
+      enabled: psEnabled.checked,
+      broker: psBroker.value,
+      user: psUser.value,
+      topic: psTopic.value,
+    };
+    var willHavePass = psPass.value === PASS_DOTS;
+    if (psPass.value !== '' && psPass.value !== PASS_DOTS) {
+      body.pass = psPass.value;
+      willHavePass = true;
+    }
+    psResult.textContent = 'Saving…';
+    fetch('/api/printspy', {method: 'POST', body: JSON.stringify(body)})
+      .then(function (r) {
+        psResult.textContent = r.ok ? 'Saved.' : 'Save failed.';
+        psPass.value = willHavePass ? PASS_DOTS : '';
+      })
+      .catch(function () { psResult.textContent = 'Save failed - check connection.'; });
+  });
+
+  var rotateSecs = document.getElementById('rotateSecs');
+  var rotationResult = document.getElementById('rotationResult');
+
+  fetch('/api/rotation').then(function (r) { return r.json(); }).then(function (s) {
+    rotateSecs.value = s.rotate_secs;
+  }).catch(function () {});
+
+  rotateSecs.addEventListener('change', function () {
+    rotationResult.textContent = 'Saving…';
+    fetch('/api/rotation', {
+      method: 'POST',
+      body: JSON.stringify({rotate_secs: parseInt(rotateSecs.value, 10)}),
+    }).then(function (r) {
+      rotationResult.textContent = r.ok ? 'Saved.' : 'Save failed.';
+    }).catch(function () { rotationResult.textContent = 'Save failed - check connection.'; });
   });
 
   var otaFile = document.getElementById('otaFile');

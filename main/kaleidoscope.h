@@ -26,7 +26,25 @@ esp_err_t kaleidobox_kaleidoscope_init(void);
 // Sets the image the animation samples from (a decoded upload or the
 // current canvas buffer) and starts the animation task.
 esp_err_t kaleidobox_kaleidoscope_start(const kaleidobox_image_t *source);
+
+// Stops the animation and persists kaido_running=false to NVS - this
+// IS the user's durable intent (Clear button, explicit stop request),
+// so it should survive a reboot as "was off."
 void kaleidobox_kaleidoscope_stop(void);
+
+// Same task-stop mechanics as kaleidobox_kaleidoscope_stop() above, but
+// does NOT touch the persisted kaleido_running flag - for internal
+// callers (panel_takeover.c) pausing the animation for a transient
+// PrintSpy/weather takeover, not because the user asked for it to stop.
+// panel_takeover.c already tracks its own resume intent separately
+// (snapshotted from NVS before calling this); using the persisting
+// stop() here was a real bug once display-rotation started
+// cycling every ~15-30s - a reflash landing mid-takeover would
+// persist "not running" even though the user's actual last action was
+// to leave it on (confirmed live: "every time I flash this thing now,
+// it doesn't remember that it was already running the kaleidoscope").
+void kaleidobox_kaleidoscope_stop_transient(void);
+
 bool kaleidobox_kaleidoscope_is_running(void);
 
 // Swaps the live source image without stopping/restarting the
