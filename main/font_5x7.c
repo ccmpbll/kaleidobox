@@ -467,14 +467,28 @@ static void fill_enclosed(uint8_t *buf, const bool *lit, int mask_w,
 // past its own thin stroke, so a wide neighbor like "2" right next to
 // it left a real notch of live pattern showing at the seam (confirmed
 // on hardware - outline mode specifically, narrow-next-to-wide is
-// exactly where the dilation alone falls short). Used by both the
+// exactly where the dilation alone falls short).
+//
+// Row-aware, not a blind rectangle: an earlier version filled every row
+// of the full glyph+halo height unconditionally, which for a
+// mostly-empty neighbor like ":" (ink only at 4 of its 14 scale-2 rows)
+// produced a flat black pillar standing the full digit height between
+// characters - visually a "weird artifact" on hardware, not the
+// tapered halo look everywhere else. Fixed by only filling a gap cell
+// when its OWN row has a lit pixel within `reach` columns on the
+// mask - i.e. only where one of the two flanking glyphs actually has a
+// stroke nearby at that height, so the fill tapers with the real
+// glyph shapes instead of standing as a rigid bar. Used by both the
 // outline and see-through modes below. Walks
 // glyph_ptr()/glyph_content_width() itself (rather than reusing
 // step_glyph()) since it only needs each character's advance, not any
 // drawing/masking side effect.
 static void fill_between_glyphs(uint8_t *buf, int x, int y, const char *text,
-                                int scale, int halo_px, uint8_t bg_r,
-                                uint8_t bg_g, uint8_t bg_b) {
+                                int scale, int halo_px, const bool *lit,
+                                int mask_x0, int mask_y0, int mask_w,
+                                int mask_h, uint8_t bg_r, uint8_t bg_g,
+                                uint8_t bg_b) {
+  const int reach = halo_px + 4;
   for (const char *p = text; *p; p++) {
     const uint8_t *glyph = glyph_ptr(*p);
     int rows = is_descender(*p) ? 8 : 7;
@@ -482,8 +496,24 @@ static void fill_between_glyphs(uint8_t *buf, int x, int y, const char *text,
     x += width * scale;
     if (p[1]) {
       for (int gy = -halo_px; gy < 7 * scale + halo_px; gy++) {
+        int py = y + gy;
+        int my = py - mask_y0;
+        if (my < 0 || my >= mask_h) {
+          continue;
+        }
         for (int gx = 0; gx < scale; gx++) {
-          plot(buf, x + gx, y + gy, bg_r, bg_g, bg_b);
+          int px = x + gx;
+          int mx = px - mask_x0;
+          bool near_lit = false;
+          for (int dx = -reach; dx <= reach && !near_lit; dx++) {
+            int nx = mx + dx;
+            if (nx >= 0 && nx < mask_w && lit[my * mask_w + nx]) {
+              near_lit = true;
+            }
+          }
+          if (near_lit) {
+            plot(buf, px, py, bg_r, bg_g, bg_b);
+          }
         }
       }
     }
@@ -534,7 +564,8 @@ void kaleidobox_font_outline_centered_to_buffer(
             mask_y0, mask_w, mask_h);
   fill_enclosed(buf, lit, mask_w, mask_h, mask_x0, mask_y0, halo_px, bg_r,
                bg_g, bg_b);
-  fill_between_glyphs(buf, text_x, y, text, scale, halo_px, bg_r, bg_g, bg_b);
+  fill_between_glyphs(buf, text_x, y, text, scale, halo_px, lit, mask_x0,
+                      mask_y0, mask_w, mask_h, bg_r, bg_g, bg_b);
   fill_halo(buf, lit, mask_w, mask_h, mask_x0, mask_y0, halo_px, bg_r, bg_g,
            bg_b);
 }
@@ -583,7 +614,8 @@ void kaleidobox_font_seethrough_centered_to_buffer(uint8_t *buf, int y,
 
   mark_line(text_x, y, text, scale, lit, mask_x0, mask_y0, mask_w, mask_h);
   fill_enclosed(buf, lit, mask_w, mask_h, mask_x0, mask_y0, halo_px, 0, 0, 0);
-  fill_between_glyphs(buf, text_x, y, text, scale, halo_px, 0, 0, 0);
+  fill_between_glyphs(buf, text_x, y, text, scale, halo_px, lit, mask_x0,
+                      mask_y0, mask_w, mask_h, 0, 0, 0);
   fill_halo(buf, lit, mask_w, mask_h, mask_x0, mask_y0, halo_px, 0, 0, 0);
 }
 

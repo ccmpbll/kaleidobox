@@ -43,15 +43,17 @@ void kaleidobox_clock_overlay(uint8_t *frame) {
   struct tm tm_now;
   localtime_r(&now, &tm_now);
 
+  bool is_24h = kaleidobox_nvs_get_clock_24h();
   int hour = tm_now.tm_hour;
-  if (!kaleidobox_nvs_get_clock_24h()) {
+  if (!is_24h) {
     hour = hour % 12;
     if (hour == 0) {
       hour = 12;
     }
   }
-  char text[6]; // "HH:MM" + NUL
-  snprintf(text, sizeof(text), "%02d:%02d", hour, tm_now.tm_min);
+  char text[6]; // "HH:MM" + NUL, or "H:MM" + NUL for 12h - both fit
+  snprintf(text, sizeof(text), is_24h ? "%02d:%02d" : "%d:%02d", hour,
+           tm_now.tm_min);
 
   int scale = kaleidobox_nvs_get_clock_scale();
   int y = (CANVAS_HEIGHT - 7 * scale) / 2;
