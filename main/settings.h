@@ -16,12 +16,6 @@ esp_err_t kaleidobox_nvs_set_fold_count(uint8_t count);
 bool kaleidobox_nvs_get_motion_zoom(void);
 esp_err_t kaleidobox_nvs_set_motion_zoom(bool enable);
 
-// Draw-mode push behavior: instant (each pixel edit sent live over the
-// /ws/draw WebSocket) vs draw-then-submit (client batches edits, one
-// full-grid POST when done).
-bool kaleidobox_nvs_get_instant_draw(void);
-esp_err_t kaleidobox_nvs_set_instant_draw(bool enable);
-
 // Gallery cycling: auto-advance (with interval_seconds) vs manual
 // next/prev via the web app.
 bool kaleidobox_nvs_get_gallery_auto_advance(void);

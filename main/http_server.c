@@ -70,52 +70,46 @@ extern const uint8_t icon_512_png_end[] asm("_binary_icon_512_png_end");
 // Long-running handlers (SSE log console) block whichever task runs them
 // until the client disconnects. esp_http_server services all connections
 // from a single task by default, so without this, one open /api/logs
-// would stall every other request until it closed. Ported from
-// printspy-cam - see examples/protocols/http_server/async_handlers in
-// esp-idf for Espressif's own version of this pattern.
-typedef struct {
-  QueueHandle_t queue;
-  SemaphoreHandle_t free_slots;
-} async_pool_t;
-
+// would stall every other request until it closed. Only one such
+// consumer exists (/api/logs), so this is a single dedicated worker
+// task rather than a generic N-worker pool - see
+// examples/protocols/http_server/async_handlers in esp-idf for
+// Espressif's own multi-worker version of this pattern.
 typedef struct {
   httpd_req_t *req;
   esp_err_t (*handler)(httpd_req_t *req);
 } async_job_t;
 
-static void async_worker_task(void *arg) {
-  async_pool_t *pool = (async_pool_t *)arg;
+static QueueHandle_t log_worker_queue;
+static SemaphoreHandle_t log_worker_free;
+
+static void log_worker_task(void *arg) {
+  (void)arg;
   while (true) {
-    xSemaphoreGive(pool->free_slots);
+    xSemaphoreGive(log_worker_free);
     async_job_t job;
-    if (xQueueReceive(pool->queue, &job, portMAX_DELAY)) {
+    if (xQueueReceive(log_worker_queue, &job, portMAX_DELAY)) {
       job.handler(job.req);
       httpd_req_async_handler_complete(job.req);
     }
   }
 }
 
-static esp_err_t async_pool_init(async_pool_t *pool, int size,
-                                 const char *name_prefix, uint32_t stack_size) {
-  pool->free_slots = xSemaphoreCreateCounting(size, 0);
-  pool->queue = xQueueCreate(size, sizeof(async_job_t));
-  if (!pool->free_slots || !pool->queue) {
+static esp_err_t log_worker_init(void) {
+  log_worker_free = xSemaphoreCreateBinary();
+  log_worker_queue = xQueueCreate(1, sizeof(async_job_t));
+  if (!log_worker_free || !log_worker_queue) {
     return ESP_ERR_NO_MEM;
   }
-  for (int i = 0; i < size; i++) {
-    char task_name[20];
-    snprintf(task_name, sizeof(task_name), "%s_%d", name_prefix, i);
-    if (xTaskCreate(async_worker_task, task_name, stack_size, pool,
-                    tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
-      ESP_LOGE(TAG, "xTaskCreate(%s, stack=%u) failed", task_name,
-               (unsigned)stack_size);
-      return ESP_ERR_NO_MEM;
-    }
+  if (xTaskCreate(log_worker_task, "log_worker", 4096, NULL,
+                  tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
+    ESP_LOGE(TAG, "xTaskCreate(log_worker) failed");
+    return ESP_ERR_NO_MEM;
   }
   return ESP_OK;
 }
 
-static esp_err_t async_pool_dispatch(async_pool_t *pool, httpd_req_t *req,
+static esp_err_t log_worker_dispatch(httpd_req_t *req,
                                      esp_err_t (*handler)(httpd_req_t *)) {
   httpd_req_t *copy = NULL;
   esp_err_t err = httpd_req_async_handler_begin(req, &copy);
@@ -123,7 +117,7 @@ static esp_err_t async_pool_dispatch(async_pool_t *pool, httpd_req_t *req,
     return err;
   }
 
-  if (xSemaphoreTake(pool->free_slots, 0) != pdTRUE) {
+  if (xSemaphoreTake(log_worker_free, 0) != pdTRUE) {
     httpd_req_async_handler_complete(copy);
     httpd_resp_set_status(req, "503 Service Unavailable");
     httpd_resp_sendstr(req, "Too many concurrent connections");
@@ -131,7 +125,7 @@ static esp_err_t async_pool_dispatch(async_pool_t *pool, httpd_req_t *req,
   }
 
   async_job_t job = {.req = copy, .handler = handler};
-  if (xQueueSend(pool->queue, &job, 0) != pdTRUE) {
+  if (xQueueSend(log_worker_queue, &job, 0) != pdTRUE) {
     httpd_req_async_handler_complete(copy);
     httpd_resp_set_status(req, "503 Service Unavailable");
     httpd_resp_sendstr(req, "Too many concurrent connections");
@@ -139,9 +133,6 @@ static esp_err_t async_pool_dispatch(async_pool_t *pool, httpd_req_t *req,
   }
   return ESP_OK;
 }
-
-#define LOG_WORKER_COUNT 1
-static async_pool_t log_pool;
 
 static esp_err_t root_handler(httpd_req_t *req) {
   httpd_resp_set_type(req, "text/html");
@@ -258,7 +249,7 @@ static esp_err_t logs_async_handler(httpd_req_t *req) {
 }
 
 static esp_err_t logs_handler(httpd_req_t *req) {
-  return async_pool_dispatch(&log_pool, req, logs_async_handler);
+  return log_worker_dispatch(req, logs_async_handler);
 }
 
 // Reads the full request body into a heap buffer. Caller must free().
@@ -1295,8 +1286,8 @@ esp_err_t kaleidobox_http_server_start(void) {
     return ESP_OK; // already running
   }
 
-  if (async_pool_init(&log_pool, LOG_WORKER_COUNT, "log_worker", 4096) != ESP_OK) {
-    ESP_LOGE(TAG, "failed to init log async worker pool");
+  if (log_worker_init() != ESP_OK) {
+    ESP_LOGE(TAG, "failed to init log async worker");
     return ESP_ERR_NO_MEM;
   }
 
@@ -1309,7 +1300,7 @@ esp_err_t kaleidobox_http_server_start(void) {
   // httpd_register_uri_handler silently drops the excess - printspy-cam
   // hit this exact bug once already (see its http_server.c comment).
   config.max_uri_handlers = 33;
-  config.max_open_sockets = LOG_WORKER_COUNT + 6;
+  config.max_open_sockets = 7; // 1 for the log worker + 6 other concurrent connections
   config.lru_purge_enable = true;
   // Same reasoning as printspy-cam: without TCP keepalive, a stale
   // /api/logs (or /ws/draw) connection never gets detected as dead - it

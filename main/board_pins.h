@@ -45,9 +45,3 @@
 #define SDCARD_PIN_CLK 1
 #define SDCARD_PIN_CMD 44
 #define SDCARD_PIN_D0 17
-
-// --- Onboard peripherals (not used by KaleidoBox yet, listed for
-// completeness / future use - e.g. IMU/RTC status, if ever wanted) ---
-#define BOARD_PIN_I2C_SCL 48
-#define BOARD_PIN_I2C_SDA 47
-#define BOARD_PIN_BOOT_BUTTON 0
