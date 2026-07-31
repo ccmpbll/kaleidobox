@@ -60,6 +60,10 @@ extern const uint8_t app_html_start[] asm("_binary_app_html_start");
 extern const uint8_t app_html_end[] asm("_binary_app_html_end");
 extern const uint8_t settings_html_start[] asm("_binary_settings_html_start");
 extern const uint8_t settings_html_end[] asm("_binary_settings_html_end");
+extern const uint8_t kaleidobox_png_start[] asm("_binary_kaleidobox_png_start");
+extern const uint8_t kaleidobox_png_end[] asm("_binary_kaleidobox_png_end");
+extern const uint8_t icon_512_png_start[] asm("_binary_icon_512_png_start");
+extern const uint8_t icon_512_png_end[] asm("_binary_icon_512_png_end");
 
 // Long-running handlers (SSE log console) block whichever task runs them
 // until the client disconnects. esp_http_server services all connections
@@ -147,6 +151,31 @@ static esp_err_t settings_page_handler(httpd_req_t *req) {
   httpd_resp_set_type(req, "text/html");
   return httpd_resp_send(req, (const char *)settings_html_start,
                          HTTPD_RESP_USE_STRLEN);
+}
+
+// EMBED_FILES (unlike EMBED_TXTFILES) doesn't null-terminate the blob -
+// it's arbitrary binary (PNG) data that can legitimately contain zero
+// bytes, so length has to come from the linker-provided end pointer,
+// not strlen.
+static esp_err_t logo_png_handler(httpd_req_t *req) {
+  httpd_resp_set_type(req, "image/png");
+  return httpd_resp_send(req, (const char *)kaleidobox_png_start,
+                         kaleidobox_png_end - kaleidobox_png_start);
+}
+
+// Dedicated square, opaque-background version of the logo for
+// apple-touch-icon/manifest use - iOS stretches a non-square icon to
+// fit its own square mask instead of letterboxing it (confirmed on
+// hardware: the hexagon logo came out visibly squished on a home
+// screen), and separately fills transparent areas with black/white of
+// its own choosing rather than respecting alpha. Padded onto a plain
+// rgb(18,18,20) square (matching the page's own dark background) once,
+// ahead of time, rather than trying to fight either behavior at
+// runtime.
+static esp_err_t icon_512_png_handler(httpd_req_t *req) {
+  httpd_resp_set_type(req, "image/png");
+  return httpd_resp_send(req, (const char *)icon_512_png_start,
+                         icon_512_png_end - icon_512_png_start);
 }
 
 static esp_err_t status_handler(httpd_req_t *req) {
@@ -1017,12 +1046,12 @@ esp_err_t kaleidobox_http_server_start(void) {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.stack_size = 8192;
   // Default max_uri_handlers is 8 - we register more than that (root,
-  // settings page, status, logs, wifi, ota, ws/draw, canvas get/submit,
-  // kaleidoscope x2, clock x2, brightness x2, gallery x10). Past the
-  // cap, httpd_register_uri_handler silently drops the excess -
+  // settings page, logo, icon, status, logs, wifi, ota, ws/draw, canvas
+  // get/submit, kaleidoscope x2, clock x2, brightness x2, gallery x10).
+  // Past the cap, httpd_register_uri_handler silently drops the excess -
   // printspy-cam hit this exact bug once already (see its
   // http_server.c comment).
-  config.max_uri_handlers = 25;
+  config.max_uri_handlers = 27;
   config.max_open_sockets = LOG_WORKER_COUNT + 6;
   config.lru_purge_enable = true;
   // Same reasoning as printspy-cam: without TCP keepalive, a stale
@@ -1046,6 +1075,11 @@ esp_err_t kaleidobox_http_server_start(void) {
   httpd_uri_t root_uri = {.uri = "/", .method = HTTP_GET, .handler = root_handler};
   httpd_uri_t settings_page_uri = {
       .uri = "/settings", .method = HTTP_GET, .handler = settings_page_handler};
+  httpd_uri_t logo_png_uri = {
+      .uri = "/kaleidobox.png", .method = HTTP_GET, .handler = logo_png_handler};
+  httpd_uri_t icon_512_png_uri = {.uri = "/icon-512.png",
+                                  .method = HTTP_GET,
+                                  .handler = icon_512_png_handler};
   httpd_uri_t status_uri = {
       .uri = "/api/status", .method = HTTP_GET, .handler = status_handler};
   httpd_uri_t logs_uri = {
@@ -1111,6 +1145,8 @@ esp_err_t kaleidobox_http_server_start(void) {
 
   httpd_register_uri_handler(server, &root_uri);
   httpd_register_uri_handler(server, &settings_page_uri);
+  httpd_register_uri_handler(server, &logo_png_uri);
+  httpd_register_uri_handler(server, &icon_512_png_uri);
   httpd_register_uri_handler(server, &status_uri);
   httpd_register_uri_handler(server, &logs_uri);
   httpd_register_uri_handler(server, &wifi_uri);
