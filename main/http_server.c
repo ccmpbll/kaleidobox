@@ -751,10 +751,15 @@ static esp_err_t printspy_post_handler(httpd_req_t *req) {
     kaleidobox_nvs_set_mqtt_user(item->valuestring);
   }
 
-  // Blank/absent leaves the stored password untouched - see the GET
-  // handler's pass_set comment.
+  // Absent leaves the stored password untouched - see the GET handler's
+  // pass_set comment. Present-but-empty is different: the UI only ever
+  // sends "pass" at all when the user actually touched the field (see
+  // settings.html), so an empty string here is a real "clear it"
+  // request, not "nothing to do" - treating it the same as absent was a
+  // real bug: clearing the field and saving silently kept the old
+  // password, which then reappeared as dots on the next page load.
   item = cJSON_GetObjectItem(json, "pass");
-  if (cJSON_IsString(item) && item->valuestring[0] != '\0') {
+  if (cJSON_IsString(item)) {
     kaleidobox_nvs_set_mqtt_pass(item->valuestring);
   }
 

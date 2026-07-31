@@ -481,9 +481,11 @@
   psSave.addEventListener('click', function () {
     // Leaving the dots (or a blank field) means "leave it as-is"
     // server-side - never send the sentinel itself as a literal new
-    // password, and never send an empty string over "pass" unless the
-    // user actually cleared a real password, so a from-scratch save
-    // doesn't accidentally wipe a previously-set one.
+    // password. Any OTHER value (including empty) means the user
+    // actually touched the field, so send it either way - a blank
+    // field is a real "clear the password" request, not "leave it
+    // alone". Only omitting "pass" entirely (untouched, still showing
+    // the dots) means "don't touch it".
     var body = {
       enabled: psEnabled.checked,
       broker: psBroker.value,
@@ -491,9 +493,9 @@
       topic: psTopic.value,
     };
     var willHavePass = psPass.value === PASS_DOTS;
-    if (psPass.value !== '' && psPass.value !== PASS_DOTS) {
+    if (psPass.value !== PASS_DOTS) {
       body.pass = psPass.value;
-      willHavePass = true;
+      willHavePass = psPass.value !== '';
     }
     psResult.textContent = 'Saving…';
     fetch('/api/printspy', {method: 'POST', body: JSON.stringify(body)})
