@@ -170,9 +170,11 @@
 
 <div class="section">
   <h2>Display Rotation</h2>
-  <p class="sub">The panel cycles clock &rarr; any printer currently printing &rarr; weather (if enabled) &rarr; clock again, spending this long on each.</p>
+  <p class="sub">The panel cycles clock &rarr; any printer currently printing &rarr; weather (if enabled) &rarr; clock again. Each gets its own duration (0 = stay indefinitely).</p>
   <div class="controls">
-    <label>Show each screen for <input type="number" id="rotateSecs" min="0" max="300" style="width:60px;"> sec (0 = off)</label>
+    <label>Clock <input type="number" id="clockSecs" min="0" max="300" style="width:60px;"> sec</label>
+    <label>Printer <input type="number" id="printerSecs" min="0" max="300" style="width:60px;"> sec</label>
+    <label>Weather <input type="number" id="weatherSecs" min="0" max="300" style="width:60px;"> sec</label>
   </div>
   <p id="rotationResult" class="result"></p>
 </div>
@@ -502,21 +504,31 @@
       .catch(function () { psResult.textContent = 'Save failed - check connection.'; });
   });
 
-  var rotateSecs = document.getElementById('rotateSecs');
+  var clockSecs = document.getElementById('clockSecs');
+  var printerSecs = document.getElementById('printerSecs');
+  var weatherSecs = document.getElementById('weatherSecs');
   var rotationResult = document.getElementById('rotationResult');
 
   fetch('/api/rotation').then(function (r) { return r.json(); }).then(function (s) {
-    rotateSecs.value = s.rotate_secs;
+    clockSecs.value = s.clock_secs;
+    printerSecs.value = s.printer_secs;
+    weatherSecs.value = s.weather_secs;
   }).catch(function () {});
 
-  rotateSecs.addEventListener('change', function () {
-    rotationResult.textContent = 'Saving…';
-    fetch('/api/rotation', {
-      method: 'POST',
-      body: JSON.stringify({rotate_secs: parseInt(rotateSecs.value, 10)}),
-    }).then(function (r) {
-      rotationResult.textContent = r.ok ? 'Saved.' : 'Save failed.';
-    }).catch(function () { rotationResult.textContent = 'Save failed - check connection.'; });
+  [clockSecs, printerSecs, weatherSecs].forEach(function (el) {
+    el.addEventListener('change', function () {
+      rotationResult.textContent = 'Saving…';
+      fetch('/api/rotation', {
+        method: 'POST',
+        body: JSON.stringify({
+          clock_secs: parseInt(clockSecs.value, 10),
+          printer_secs: parseInt(printerSecs.value, 10),
+          weather_secs: parseInt(weatherSecs.value, 10),
+        }),
+      }).then(function (r) {
+        rotationResult.textContent = r.ok ? 'Saved.' : 'Save failed.';
+      }).catch(function () { rotationResult.textContent = 'Save failed - check connection.'; });
+    });
   });
 
   var otaFile = document.getElementById('otaFile');

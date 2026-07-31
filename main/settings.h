@@ -103,7 +103,7 @@ esp_err_t kaleidobox_nvs_set_printspy_topic(const char *topic);
 
 // Weather takeover - see main/weather.h. While enabled, the display
 // rotation (see below) fetches a fresh OpenWeatherMap reading and shows
-// it for one rotate_secs slot. units: 0=metric(C), 1=imperial(F).
+// it for one weather_secs slot. units: 0=metric(C), 1=imperial(F).
 // fields is a bitmask - see main/weather.h for the bit layout. Location
 // is just a ZIP/postal code - OWM's zip= param defaults to US with no
 // country code needed (confirmed live).
@@ -120,11 +120,18 @@ esp_err_t kaleidobox_nvs_set_weather_fields(uint16_t fields);
 
 // Display rotation - see main/display_rotation.c. The panel cycles
 // clock (kaleidoscope/idle) -> each currently-printing printer, in
-// turn -> weather (if enabled) -> clock ..., spending rotate_secs on
-// each applicable slot and skipping any that don't currently apply
-// (e.g. no printer printing, or weather disabled).
-uint16_t kaleidobox_nvs_get_rotate_secs(void);
-esp_err_t kaleidobox_nvs_set_rotate_secs(uint16_t seconds);
+// turn -> weather (if enabled) -> clock ..., skipping any slot that
+// doesn't currently apply (e.g. no printer printing, or weather
+// disabled). Each slot has its own independent dwell time - 0 means
+// "stay in this slot indefinitely" (only meaningful for clock; a
+// printer/weather slot with 0 just never advances past it once
+// entered, which for weather means never returning to clock).
+uint16_t kaleidobox_nvs_get_clock_secs(void);
+esp_err_t kaleidobox_nvs_set_clock_secs(uint16_t seconds);
+uint16_t kaleidobox_nvs_get_printer_secs(void);
+esp_err_t kaleidobox_nvs_set_printer_secs(uint16_t seconds);
+uint16_t kaleidobox_nvs_get_weather_secs(void);
+esp_err_t kaleidobox_nvs_set_weather_secs(uint16_t seconds);
 
 // Brightness schedule - see main/brightness_schedule.h. While enabled,
 // brightness is set to dim_brightness at dim_hour:dim_min and restored

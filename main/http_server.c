@@ -865,13 +865,15 @@ static esp_err_t weather_post_handler(httpd_req_t *req) {
 }
 
 // --- Display rotation --------------------------------------------------------
-// See main/display_rotation.c - clock/printer/weather all share this one
-// interval, so it lives in its own small endpoint rather than under any
-// one of those three feature endpoints.
+// See main/display_rotation.c - clock/printer/weather each get their own
+// independent dwell time, so this lives in its own small endpoint rather
+// than under any one of those three feature endpoints.
 
 static esp_err_t rotation_get_handler(httpd_req_t *req) {
   cJSON *root = cJSON_CreateObject();
-  cJSON_AddNumberToObject(root, "rotate_secs", kaleidobox_nvs_get_rotate_secs());
+  cJSON_AddNumberToObject(root, "clock_secs", kaleidobox_nvs_get_clock_secs());
+  cJSON_AddNumberToObject(root, "printer_secs", kaleidobox_nvs_get_printer_secs());
+  cJSON_AddNumberToObject(root, "weather_secs", kaleidobox_nvs_get_weather_secs());
 
   char *json = cJSON_PrintUnformatted(root);
   httpd_resp_set_type(req, "application/json");
@@ -895,9 +897,17 @@ static esp_err_t rotation_post_handler(httpd_req_t *req) {
     return ESP_FAIL;
   }
 
-  cJSON *item = cJSON_GetObjectItem(json, "rotate_secs");
+  cJSON *item = cJSON_GetObjectItem(json, "clock_secs");
   if (cJSON_IsNumber(item) && item->valueint >= 0 && item->valueint <= 300) {
-    kaleidobox_nvs_set_rotate_secs((uint16_t)item->valueint);
+    kaleidobox_nvs_set_clock_secs((uint16_t)item->valueint);
+  }
+  item = cJSON_GetObjectItem(json, "printer_secs");
+  if (cJSON_IsNumber(item) && item->valueint >= 0 && item->valueint <= 300) {
+    kaleidobox_nvs_set_printer_secs((uint16_t)item->valueint);
+  }
+  item = cJSON_GetObjectItem(json, "weather_secs");
+  if (cJSON_IsNumber(item) && item->valueint >= 0 && item->valueint <= 300) {
+    kaleidobox_nvs_set_weather_secs((uint16_t)item->valueint);
   }
   cJSON_Delete(json);
 

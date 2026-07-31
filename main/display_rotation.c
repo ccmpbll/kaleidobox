@@ -97,6 +97,21 @@ static void advance(void) {
   enter_clock();
 }
 
+// Each slot has its own independent dwell time (see settings.h) - the
+// user wanted these tunable separately, e.g. a shorter printer-progress
+// refresh than a weather screen that needs time to actually read.
+static uint16_t current_slot_secs(void) {
+  switch (g_slot) {
+  case SLOT_CLOCK:
+    return kaleidobox_nvs_get_clock_secs();
+  case SLOT_PRINTER:
+    return kaleidobox_nvs_get_printer_secs();
+  case SLOT_WEATHER:
+  default:
+    return kaleidobox_nvs_get_weather_secs();
+  }
+}
+
 static void rotation_task(void *arg) {
   (void)arg;
   ESP_LOGI(TAG, "display_rotation running");
@@ -104,11 +119,11 @@ static void rotation_task(void *arg) {
   while (1) {
     vTaskDelay(pdMS_TO_TICKS(TICK_MS));
 
-    uint16_t rotate_secs = kaleidobox_nvs_get_rotate_secs();
-    if (rotate_secs == 0) {
-      continue; // 0 = rotation disabled, stay put
+    uint16_t secs = current_slot_secs();
+    if (secs == 0) {
+      continue; // 0 = stay in this slot indefinitely
     }
-    if (esp_timer_get_time() - g_slot_start_us >= (int64_t)rotate_secs * 1000000) {
+    if (esp_timer_get_time() - g_slot_start_us >= (int64_t)secs * 1000000) {
       advance();
     }
   }

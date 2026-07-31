@@ -43,8 +43,8 @@ void kaleidobox_canvas_set_all(const uint8_t *rgb888) {
   // wifi.c's boot-time IP display) pass kaleidobox_canvas_buffer()
   // right back in here purely to repaint the matrix from whatever the
   // canvas already holds - not an actual content change. Marking dirty
-  // for those was a real bug: every display-rotation lap (every
-  // ~rotate_secs*2, see display_rotation.c) triggered a pointless
+  // for those was a real bug: every display-rotation lap (see
+  // display_rotation.c) triggered a pointless
   // autosave write to SD of data that hadn't changed, competing for
   // the same small internal DMA-capable heap TLS uses - confirmed live
   // as intermittent "not enough mem" SD read failures. Only a genuine

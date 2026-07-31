@@ -24,7 +24,9 @@ static const char *NVS_ID_MQTT_USER = "mqtt_user";
 static const char *NVS_ID_MQTT_PASS = "mqtt_pass";
 static const char *NVS_ID_PRINTSPY_EN = "printspy_en";
 static const char *NVS_ID_PRINTSPY_TOPIC = "printspy_topic";
-static const char *NVS_ID_ROTATE_SECS = "rotate_secs";
+static const char *NVS_ID_CLOCK_SECS = "clock_secs";
+static const char *NVS_ID_PRINTER_SECS = "printer_secs";
+static const char *NVS_ID_WEATHER_SECS = "weather_secs";
 static const char *NVS_ID_WEATHER_ENABLED = "weather_enabled";
 static const char *NVS_ID_OW_API_KEY = "ow_api_key";
 static const char *NVS_ID_WEATHER_ZIP = "weather_zip";
@@ -49,11 +51,13 @@ static const char *NVS_ID_BRIGHT_MIN = "bright_min";
 #define DEFAULT_CLOCK_SCALE 2
 #define DEFAULT_NTP_SERVER "pool.ntp.org"
 #define DEFAULT_PRINTSPY_TOPIC "printspy/printer/+/state"
-// 8 (this setting's old printspy-only default) was too fast once
-// weather joined the same cycle - a 6-line weather screen needs more
-// than 8s to actually read. Confirmed live ("why is it changing this
-// fast?").
-#define DEFAULT_ROTATE_SECS 15
+#define DEFAULT_CLOCK_SECS 15
+#define DEFAULT_PRINTER_SECS 8 // matches the old printspy-only rotate-between-printers cadence
+// 8 (a plain copy of the printer default before these were split
+// apart) was too fast for weather specifically - a 6-line weather
+// screen needs more than 8s to actually read. Confirmed live ("why is
+// it changing this fast?").
+#define DEFAULT_WEATHER_SECS 15
 #define DEFAULT_WEATHER_UNITS 1 // imperial (Fahrenheit)
 #define DEFAULT_WEATHER_FIELDS 0x0043 // bit0=temp, bit1=condition, bit6=location - see weather.h
 #define DEFAULT_DIM_HOUR 22
@@ -80,10 +84,10 @@ static char mqtt_user_val[32] = "";
 static char mqtt_pass_val[32] = "";
 static uint8_t printspy_en_val = 0;
 static char printspy_topic_val[80] = DEFAULT_PRINTSPY_TOPIC;
-// Shared by all three display-rotation slots (clock/printer/weather),
-// not printspy-specific despite living near the printspy settings - see
-// main/display_rotation.c.
-static uint16_t rotate_secs_val = DEFAULT_ROTATE_SECS;
+// Independent dwell time per display-rotation slot - see main/display_rotation.c.
+static uint16_t clock_secs_val = DEFAULT_CLOCK_SECS;
+static uint16_t printer_secs_val = DEFAULT_PRINTER_SECS;
+static uint16_t weather_secs_val = DEFAULT_WEATHER_SECS;
 static uint8_t weather_enabled_val = 0;
 static char ow_api_key_val[48] = "";
 static char weather_zip_val[16] = "";
@@ -164,7 +168,9 @@ esp_err_t kaleidobox_nvs_init(void) {
   LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_CLOCK_SCALE, clock_scale_val);
   LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_CLOCK_24H, clock_24h_val);
   LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_PRINTSPY_EN, printspy_en_val);
-  LOAD_NVS_SCALAR(nvs_get_u16, NVS_ID_ROTATE_SECS, rotate_secs_val);
+  LOAD_NVS_SCALAR(nvs_get_u16, NVS_ID_CLOCK_SECS, clock_secs_val);
+  LOAD_NVS_SCALAR(nvs_get_u16, NVS_ID_PRINTER_SECS, printer_secs_val);
+  LOAD_NVS_SCALAR(nvs_get_u16, NVS_ID_WEATHER_SECS, weather_secs_val);
   LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_WEATHER_ENABLED, weather_enabled_val);
   LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_WEATHER_UNITS, weather_units_val);
   LOAD_NVS_SCALAR(nvs_get_u16, NVS_ID_WEATHER_FIELDS, weather_fields_val);
@@ -287,9 +293,19 @@ esp_err_t kaleidobox_nvs_set_printspy_topic(const char *topic) {
   STRING_SETTER(NVS_ID_PRINTSPY_TOPIC, printspy_topic_val, topic)
 }
 
-uint16_t kaleidobox_nvs_get_rotate_secs(void) { return rotate_secs_val; }
-esp_err_t kaleidobox_nvs_set_rotate_secs(uint16_t seconds) {
-  SCALAR_SETTER(nvs_set_u16, NVS_ID_ROTATE_SECS, rotate_secs_val, seconds)
+uint16_t kaleidobox_nvs_get_clock_secs(void) { return clock_secs_val; }
+esp_err_t kaleidobox_nvs_set_clock_secs(uint16_t seconds) {
+  SCALAR_SETTER(nvs_set_u16, NVS_ID_CLOCK_SECS, clock_secs_val, seconds)
+}
+
+uint16_t kaleidobox_nvs_get_printer_secs(void) { return printer_secs_val; }
+esp_err_t kaleidobox_nvs_set_printer_secs(uint16_t seconds) {
+  SCALAR_SETTER(nvs_set_u16, NVS_ID_PRINTER_SECS, printer_secs_val, seconds)
+}
+
+uint16_t kaleidobox_nvs_get_weather_secs(void) { return weather_secs_val; }
+esp_err_t kaleidobox_nvs_set_weather_secs(uint16_t seconds) {
+  SCALAR_SETTER(nvs_set_u16, NVS_ID_WEATHER_SECS, weather_secs_val, seconds)
 }
 
 bool kaleidobox_nvs_get_weather_enabled(void) { return weather_enabled_val != 0; }
