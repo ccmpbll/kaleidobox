@@ -15,6 +15,7 @@ idf_component_register(
     "sdcard.c"
     "gallery.c"
     "font_5x7.c"
+    "clock.c"
   INCLUDE_DIRS
     "."
   EMBED_TXTFILES
@@ -37,6 +38,7 @@ idf_component_register(
     heap
     json
     log
+    lwip
     mdns
     nvs_flash
     sdmmc

@@ -40,3 +40,44 @@ esp_err_t kaleidobox_nvs_set_kaleido_running(bool running);
 // and on every change via the HTTP API.
 uint8_t kaleidobox_nvs_get_brightness(void);
 esp_err_t kaleidobox_nvs_set_brightness(uint8_t brightness);
+
+// Clock overlay (kaleidoscope mode only) - see main/clock.h. mode:
+// 0=off, 1=outline (colored digits with a black halo hugging each
+// stroke, enclosed holes like "0"'s counter flood-filled black too),
+// 2=default (same colored digits, no halo - painted straight onto the
+// live pattern), 3=seethrough (digit strokes stay fully transparent -
+// the live pattern shows through them - with a fixed black outline,
+// scaled 1px/2px with clock_scale, and the gaps between digits filled
+// black too), 4=rectangle (solid black plate behind colored digits).
+uint8_t kaleidobox_nvs_get_clock_mode(void);
+esp_err_t kaleidobox_nvs_set_clock_mode(uint8_t mode);
+
+// Packed 0x00RRGGBB - the digit color in solid/cutout modes, the halo
+// outline color in see-through mode.
+uint32_t kaleidobox_nvs_get_clock_color(void);
+esp_err_t kaleidobox_nvs_set_clock_color(uint32_t color);
+
+// Digit size multiplier (1-2) - see kaleidobox_font_draw_text_centered_to_buffer()'s
+// scale param in font_5x7.h. Default 2. Capped at 2, not higher -
+// "HH:MM"'s real (proportional) width already clips past the panel's
+// 64px at 3x (user-confirmed on hardware: unreadable, not just tight).
+uint8_t kaleidobox_nvs_get_clock_scale(void);
+esp_err_t kaleidobox_nvs_set_clock_scale(uint8_t scale);
+
+// true = 24h ("13:00"), false = 12h ("1:00", no AM/PM shown - the panel
+// has no room for it at this text size). Default true.
+bool kaleidobox_nvs_get_clock_24h(void);
+esp_err_t kaleidobox_nvs_set_clock_24h(bool enable);
+
+// NTP server hostname, default "pool.ntp.org". Getters return a pointer
+// to static storage, not a copy - fine under the same single-writer
+// assumption every setting here already makes (settings only change via
+// HTTP handlers, which run one at a time on the httpd task).
+const char *kaleidobox_nvs_get_ntp_server(void);
+esp_err_t kaleidobox_nvs_set_ntp_server(const char *server);
+
+// POSIX TZ string (e.g. "EST5EDT,M3.2.0,M11.1.0"), resolved client-side
+// from an IANA-style label - see web/app.html's timezone dropdown.
+// Empty string (the default) means UTC.
+const char *kaleidobox_nvs_get_clock_tz(void);
+esp_err_t kaleidobox_nvs_set_clock_tz(const char *tz);

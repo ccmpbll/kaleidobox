@@ -1,4 +1,5 @@
 #include "canvas.h"
+#include "clock.h"
 #include "esp_log.h"
 #include "gallery.h"
 #include "kaleidoscope.h"
@@ -39,6 +40,7 @@ void app_main(void) {
   ESP_ERROR_CHECK(err);
   ESP_ERROR_CHECK(kaleidobox_nvs_init());
   kaleidobox_matrix_set_brightness(kaleidobox_nvs_get_brightness());
+  ESP_ERROR_CHECK(kaleidobox_clock_init());
 
   ESP_ERROR_CHECK(kaleidobox_canvas_init());
   ESP_ERROR_CHECK(kaleidobox_kaleidoscope_init());

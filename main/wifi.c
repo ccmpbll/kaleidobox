@@ -1,6 +1,7 @@
 #include "wifi.h"
 
 #include "canvas.h"
+#include "clock.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_timer.h"
@@ -260,6 +261,8 @@ static void event_handler(void *arg, esp_event_base_t event_base,
         show_ip_on_matrix(&event->ip_info.ip);
       }
       start_mdns();
+      // Idempotent - safe on every reconnect, see its own comment.
+      kaleidobox_clock_start_sntp();
       // Idempotent - only starts the HTTP server on first IP.
       kaleidobox_http_server_start();
       break;

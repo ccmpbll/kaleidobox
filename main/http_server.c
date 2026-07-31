@@ -2,6 +2,7 @@
 
 #include "canvas.h"
 #include "cJSON.h"
+#include "clock.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_netif.h"
@@ -559,6 +560,113 @@ static esp_err_t kaleidoscope_post_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
+// --- Clock overlay (kaleidoscope mode only) ---------------------------------
+
+static esp_err_t clock_get_handler(httpd_req_t *req) {
+  cJSON *root = cJSON_CreateObject();
+  uint8_t mode = kaleidobox_nvs_get_clock_mode();
+  const char *mode_str = "off";
+  if (mode == 1) {
+    mode_str = "outline";
+  } else if (mode == 2) {
+    mode_str = "default";
+  } else if (mode == 3) {
+    mode_str = "seethrough";
+  } else if (mode == 4) {
+    mode_str = "rectangle";
+  }
+  cJSON_AddStringToObject(root, "mode", mode_str);
+
+  char color_str[8];
+  snprintf(color_str, sizeof(color_str), "#%06lx",
+           (unsigned long)kaleidobox_nvs_get_clock_color());
+  cJSON_AddStringToObject(root, "color", color_str);
+  cJSON_AddNumberToObject(root, "scale", kaleidobox_nvs_get_clock_scale());
+  cJSON_AddBoolToObject(root, "24h", kaleidobox_nvs_get_clock_24h());
+  cJSON_AddStringToObject(root, "ntp_server", kaleidobox_nvs_get_ntp_server());
+  cJSON_AddStringToObject(root, "timezone", kaleidobox_nvs_get_clock_tz());
+
+  char *json = cJSON_PrintUnformatted(root);
+  httpd_resp_set_type(req, "application/json");
+  esp_err_t res = httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
+  free(json);
+  cJSON_Delete(root);
+  return res;
+}
+
+static esp_err_t clock_post_handler(httpd_req_t *req) {
+  char *body = NULL;
+  if (read_body(req, &body) != ESP_OK) {
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  cJSON *json = cJSON_Parse(body);
+  free(body);
+  if (!json) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_sendstr(req, "Invalid JSON");
+    return ESP_FAIL;
+  }
+
+  cJSON *item = cJSON_GetObjectItem(json, "mode");
+  if (cJSON_IsString(item)) {
+    uint8_t mode = 0;
+    if (strcmp(item->valuestring, "outline") == 0) {
+      mode = 1;
+    } else if (strcmp(item->valuestring, "default") == 0) {
+      mode = 2;
+    } else if (strcmp(item->valuestring, "seethrough") == 0) {
+      mode = 3;
+    } else if (strcmp(item->valuestring, "rectangle") == 0) {
+      mode = 4;
+    }
+    kaleidobox_nvs_set_clock_mode(mode);
+  }
+
+  item = cJSON_GetObjectItem(json, "color");
+  if (cJSON_IsString(item) && item->valuestring[0] == '#' &&
+      strlen(item->valuestring) == 7) {
+    kaleidobox_nvs_set_clock_color(
+        (uint32_t)strtoul(item->valuestring + 1, NULL, 16));
+  }
+
+  item = cJSON_GetObjectItem(json, "scale");
+  if (cJSON_IsNumber(item) && item->valueint >= 1 && item->valueint <= 2) {
+    kaleidobox_nvs_set_clock_scale((uint8_t)item->valueint);
+  }
+
+  item = cJSON_GetObjectItem(json, "24h");
+  if (cJSON_IsBool(item)) {
+    kaleidobox_nvs_set_clock_24h(cJSON_IsTrue(item));
+  }
+
+  bool ntp_changed = false;
+  item = cJSON_GetObjectItem(json, "ntp_server");
+  if (cJSON_IsString(item) && item->valuestring[0] != '\0') {
+    ntp_changed = kaleidobox_nvs_set_ntp_server(item->valuestring) == ESP_OK;
+  }
+
+  bool tz_changed = false;
+  item = cJSON_GetObjectItem(json, "timezone");
+  if (cJSON_IsString(item)) {
+    tz_changed = kaleidobox_nvs_set_clock_tz(item->valuestring) == ESP_OK;
+  }
+  cJSON_Delete(json);
+
+  // Applied live, not just persisted - a settings change should take
+  // effect immediately, same as every other setting on this page.
+  if (tz_changed) {
+    kaleidobox_clock_apply_tz();
+  }
+  if (ntp_changed) {
+    kaleidobox_clock_start_sntp();
+  }
+
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_sendstr(req, "{\"ok\":true}");
+  return ESP_OK;
+}
+
 // --- Brightness ------------------------------------------------------------
 
 static esp_err_t brightness_get_handler(httpd_req_t *req) {
@@ -910,10 +1018,11 @@ esp_err_t kaleidobox_http_server_start(void) {
   config.stack_size = 8192;
   // Default max_uri_handlers is 8 - we register more than that (root,
   // settings page, status, logs, wifi, ota, ws/draw, canvas get/submit,
-  // kaleidoscope x2, brightness x2, gallery x10). Past the cap,
-  // httpd_register_uri_handler silently drops the excess - printspy-cam
-  // hit this exact bug once already (see its http_server.c comment).
-  config.max_uri_handlers = 23;
+  // kaleidoscope x2, clock x2, brightness x2, gallery x10). Past the
+  // cap, httpd_register_uri_handler silently drops the excess -
+  // printspy-cam hit this exact bug once already (see its
+  // http_server.c comment).
+  config.max_uri_handlers = 25;
   config.max_open_sockets = LOG_WORKER_COUNT + 6;
   config.lru_purge_enable = true;
   // Same reasoning as printspy-cam: without TCP keepalive, a stale
@@ -960,6 +1069,10 @@ esp_err_t kaleidobox_http_server_start(void) {
   httpd_uri_t kaleidoscope_post_uri = {.uri = "/api/kaleidoscope",
                                        .method = HTTP_POST,
                                        .handler = kaleidoscope_post_handler};
+  httpd_uri_t clock_get_uri = {
+      .uri = "/api/clock", .method = HTTP_GET, .handler = clock_get_handler};
+  httpd_uri_t clock_post_uri = {
+      .uri = "/api/clock", .method = HTTP_POST, .handler = clock_post_handler};
   httpd_uri_t brightness_get_uri = {.uri = "/api/brightness",
                                     .method = HTTP_GET,
                                     .handler = brightness_get_handler};
@@ -1007,6 +1120,8 @@ esp_err_t kaleidobox_http_server_start(void) {
   httpd_register_uri_handler(server, &canvas_submit_uri);
   httpd_register_uri_handler(server, &kaleidoscope_get_uri);
   httpd_register_uri_handler(server, &kaleidoscope_post_uri);
+  httpd_register_uri_handler(server, &clock_get_uri);
+  httpd_register_uri_handler(server, &clock_post_uri);
   httpd_register_uri_handler(server, &brightness_get_uri);
   httpd_register_uri_handler(server, &brightness_post_uri);
   httpd_register_uri_handler(server, &gallery_get_uri);

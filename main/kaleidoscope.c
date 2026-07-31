@@ -1,6 +1,7 @@
 #include "kaleidoscope.h"
 
 #include "canvas.h"
+#include "clock.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -149,6 +150,7 @@ static void kaleidoscope_task(void *arg) {
   while (g_should_run) {
     float zoom_scale = motion_zoom ? (1.0f + ZOOM_AMPLITUDE * sinf(zoom_phase)) : 1.0f;
     render_frame(frame, rotation_offset, zoom_scale);
+    kaleidobox_clock_overlay(frame); // no-op unless the clock is enabled
     kaleidobox_matrix_draw_rgb888(frame, CANVAS_WIDTH, CANVAS_HEIGHT);
 
     // Wrapped, not left to grow forever - sinf/cosf(zoom_phase) is the
