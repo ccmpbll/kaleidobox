@@ -1,5 +1,6 @@
 #include "canvas.h"
 #include "clock.h"
+#include "display_rotation.h"
 #include "esp_log.h"
 #include "gallery.h"
 #include "kaleidoscope.h"
@@ -49,6 +50,12 @@ void app_main(void) {
   // until sdcard.c is actually implemented.
   kaleidobox_sdcard_init();
   ESP_ERROR_CHECK(kaleidobox_gallery_init());
+  // Unlike printspy's MQTT connect (deferred to wifi.c, needs an IP
+  // first), the rotation task's clock slot works with no network at
+  // all, and its printer/weather slots just find nothing available (or
+  // fail their fetch and retry next lap) until WiFi comes up - no
+  // boot-ordering dependency.
+  ESP_ERROR_CHECK(kaleidobox_display_rotation_init());
 
   // Restore whatever was on the panel before the last reboot (canvas
   // content autosaved by gallery.c's background task) - a no-op if no

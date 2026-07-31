@@ -81,3 +81,73 @@ esp_err_t kaleidobox_nvs_set_ntp_server(const char *server);
 // Empty string (the default) means UTC.
 const char *kaleidobox_nvs_get_clock_tz(void);
 esp_err_t kaleidobox_nvs_set_clock_tz(const char *tz);
+
+// MQTT broker connection (shared by whatever MQTT features exist - just
+// PrintSpy today). Broker is a full URI e.g. "mqtt://host:1883". User
+// and pass may be empty (anonymous broker auth).
+const char *kaleidobox_nvs_get_mqtt_broker(void);
+esp_err_t kaleidobox_nvs_set_mqtt_broker(const char *broker);
+const char *kaleidobox_nvs_get_mqtt_user(void);
+esp_err_t kaleidobox_nvs_set_mqtt_user(const char *user);
+const char *kaleidobox_nvs_get_mqtt_pass(void);
+esp_err_t kaleidobox_nvs_set_mqtt_pass(const char *pass);
+
+// PrintSpy print-status takeover - see main/printspy.h. Subscribes to
+// printspy_topic (default wildcard "printspy/printer/+/state", one
+// message per printer) on the broker above and tracks every printer's
+// state; main/display_rotation.c decides when to actually show it.
+bool kaleidobox_nvs_get_printspy_enabled(void);
+esp_err_t kaleidobox_nvs_set_printspy_enabled(bool enable);
+const char *kaleidobox_nvs_get_printspy_topic(void);
+esp_err_t kaleidobox_nvs_set_printspy_topic(const char *topic);
+
+// Weather takeover - see main/weather.h. While enabled, the display
+// rotation (see below) fetches a fresh OpenWeatherMap reading and shows
+// it for one weather_secs slot. units: 0=metric(C), 1=imperial(F).
+// fields is a bitmask - see main/weather.h for the bit layout. Location
+// is just a ZIP/postal code - OWM's zip= param defaults to US with no
+// country code needed (confirmed live).
+bool kaleidobox_nvs_get_weather_enabled(void);
+esp_err_t kaleidobox_nvs_set_weather_enabled(bool enable);
+const char *kaleidobox_nvs_get_ow_api_key(void);
+esp_err_t kaleidobox_nvs_set_ow_api_key(const char *key);
+const char *kaleidobox_nvs_get_weather_zip(void);
+esp_err_t kaleidobox_nvs_set_weather_zip(const char *zip);
+uint8_t kaleidobox_nvs_get_weather_units(void);
+esp_err_t kaleidobox_nvs_set_weather_units(uint8_t units);
+uint16_t kaleidobox_nvs_get_weather_fields(void);
+esp_err_t kaleidobox_nvs_set_weather_fields(uint16_t fields);
+
+// Display rotation - see main/display_rotation.c. The panel cycles
+// clock (kaleidoscope/idle) -> each currently-printing printer, in
+// turn -> weather (if enabled) -> clock ..., skipping any slot that
+// doesn't currently apply (e.g. no printer printing, or weather
+// disabled). Each slot has its own independent dwell time - 0 means
+// "stay in this slot indefinitely" (only meaningful for clock; a
+// printer/weather slot with 0 just never advances past it once
+// entered, which for weather means never returning to clock).
+uint16_t kaleidobox_nvs_get_clock_secs(void);
+esp_err_t kaleidobox_nvs_set_clock_secs(uint16_t seconds);
+uint16_t kaleidobox_nvs_get_printer_secs(void);
+esp_err_t kaleidobox_nvs_set_printer_secs(uint16_t seconds);
+uint16_t kaleidobox_nvs_get_weather_secs(void);
+esp_err_t kaleidobox_nvs_set_weather_secs(uint16_t seconds);
+
+// Brightness schedule - see main/brightness_schedule.h. While enabled,
+// brightness is set to dim_brightness at dim_hour:dim_min and restored
+// to whatever the manual brightness setting already holds at
+// bright_hour:bright_min. Edge-triggered (only acts exactly at each
+// crossing), so a manual brightness change mid-window sticks until the
+// next real crossing rather than getting overwritten.
+bool kaleidobox_nvs_get_brightness_schedule_enabled(void);
+esp_err_t kaleidobox_nvs_set_brightness_schedule_enabled(bool enable);
+uint8_t kaleidobox_nvs_get_dim_hour(void);
+esp_err_t kaleidobox_nvs_set_dim_hour(uint8_t hour);
+uint8_t kaleidobox_nvs_get_dim_min(void);
+esp_err_t kaleidobox_nvs_set_dim_min(uint8_t min);
+uint8_t kaleidobox_nvs_get_dim_brightness(void);
+esp_err_t kaleidobox_nvs_set_dim_brightness(uint8_t brightness);
+uint8_t kaleidobox_nvs_get_bright_hour(void);
+esp_err_t kaleidobox_nvs_set_bright_hour(uint8_t hour);
+uint8_t kaleidobox_nvs_get_bright_min(void);
+esp_err_t kaleidobox_nvs_set_bright_min(uint8_t min);

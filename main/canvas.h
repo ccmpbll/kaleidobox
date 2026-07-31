@@ -31,9 +31,24 @@ void kaleidobox_canvas_set_all(const uint8_t *rgb888);
 // double buffering and need this. Not called anywhere in draw mode.
 void kaleidobox_canvas_flip(void);
 
-// Test-and-clear: true if the buffer changed since the last call,
-// false (and clears back to false) otherwise. Consumed by gallery.c's
-// background task to autosave the buffer to the TF card only when it's
-// actually changed, so a reboot can restore whatever was last showing
-// instead of coming back up blank.
-bool kaleidobox_canvas_take_dirty(void);
+// True if the buffer has changed since the last kaleidobox_canvas_clear_dirty()
+// call. Consumed by gallery.c's background task to autosave the buffer
+// to the TF card only when it's actually changed, so a reboot can
+// restore whatever was last showing instead of coming back up blank.
+// Deliberately split from clear_dirty() (not a combined test-and-clear)
+// so the caller only clears it once the save actually succeeds - a
+// failed write (e.g. a transient SD DMA allocation failure) should
+// retry next tick, not silently drop the pending save.
+bool kaleidobox_canvas_is_dirty(void);
+void kaleidobox_canvas_clear_dirty(void);
+
+// Explicit "the user is actively drawing right now" signal - separate
+// from set_pixel/set_all above, which are also called programmatically
+// (gallery load, kaleidoscope restore, panel takeovers restoring prior
+// content) and must NOT count as draw activity. Callers mark activity
+// only from the two real user-draw entry points in http_server.c
+// (ws_draw_handler, canvas_submit_post_handler). Consumed by
+// panel_takeover.c to avoid yanking the panel away from someone
+// mid-draw for a PrintSpy/weather takeover.
+void kaleidobox_canvas_mark_draw_activity(void);
+int64_t kaleidobox_canvas_ms_since_draw_activity(void);

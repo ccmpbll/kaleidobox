@@ -19,6 +19,25 @@ static const char *NVS_ID_CLOCK_SCALE = "clock_scale";
 static const char *NVS_ID_CLOCK_24H = "clock_24h";
 static const char *NVS_ID_NTP_SERVER = "ntp_server";
 static const char *NVS_ID_CLOCK_TZ = "clock_tz";
+static const char *NVS_ID_MQTT_BROKER = "mqtt_broker";
+static const char *NVS_ID_MQTT_USER = "mqtt_user";
+static const char *NVS_ID_MQTT_PASS = "mqtt_pass";
+static const char *NVS_ID_PRINTSPY_EN = "printspy_en";
+static const char *NVS_ID_PRINTSPY_TOPIC = "printspy_topic";
+static const char *NVS_ID_CLOCK_SECS = "clock_secs";
+static const char *NVS_ID_PRINTER_SECS = "printer_secs";
+static const char *NVS_ID_WEATHER_SECS = "weather_secs";
+static const char *NVS_ID_WEATHER_ENABLED = "weather_enabled";
+static const char *NVS_ID_OW_API_KEY = "ow_api_key";
+static const char *NVS_ID_WEATHER_ZIP = "weather_zip";
+static const char *NVS_ID_WEATHER_UNITS = "weather_units";
+static const char *NVS_ID_WEATHER_FIELDS = "weather_fields";
+static const char *NVS_ID_BRIGHT_SCHED_EN = "bright_sched_en";
+static const char *NVS_ID_DIM_HOUR = "dim_hour";
+static const char *NVS_ID_DIM_MIN = "dim_min";
+static const char *NVS_ID_DIM_BRIGHTNESS = "dim_brightness";
+static const char *NVS_ID_BRIGHT_HOUR = "bright_hour";
+static const char *NVS_ID_BRIGHT_MIN = "bright_min";
 
 // Defaults chosen so a freshly-flashed device (before any setting has
 // ever been written) behaves sensibly rather than at the extremes of
@@ -31,6 +50,21 @@ static const char *NVS_ID_CLOCK_TZ = "clock_tz";
 #define DEFAULT_CLOCK_COLOR 0xFFFFFF // white
 #define DEFAULT_CLOCK_SCALE 2
 #define DEFAULT_NTP_SERVER "pool.ntp.org"
+#define DEFAULT_PRINTSPY_TOPIC "printspy/printer/+/state"
+#define DEFAULT_CLOCK_SECS 15
+#define DEFAULT_PRINTER_SECS 8 // matches the old printspy-only rotate-between-printers cadence
+// 8 (a plain copy of the printer default before these were split
+// apart) was too fast for weather specifically - a 6-line weather
+// screen needs more than 8s to actually read. Confirmed live ("why is
+// it changing this fast?").
+#define DEFAULT_WEATHER_SECS 15
+#define DEFAULT_WEATHER_UNITS 1 // imperial (Fahrenheit)
+#define DEFAULT_WEATHER_FIELDS 0x0043 // bit0=temp, bit1=condition, bit6=location - see weather.h
+#define DEFAULT_DIM_HOUR 22
+#define DEFAULT_DIM_MIN 0
+#define DEFAULT_DIM_BRIGHTNESS 32
+#define DEFAULT_BRIGHT_HOUR 7
+#define DEFAULT_BRIGHT_MIN 0
 
 static uint8_t fold_count_val = DEFAULT_FOLD_COUNT;
 static uint8_t motion_zoom_val = 0;
@@ -45,6 +79,26 @@ static uint8_t clock_scale_val = DEFAULT_CLOCK_SCALE;
 static uint8_t clock_24h_val = 1; // 24h, matches the original hardcoded "%02d:%02d" behavior
 static char ntp_server_val[64] = DEFAULT_NTP_SERVER;
 static char clock_tz_val[64] = ""; // empty = UTC
+static char mqtt_broker_val[80] = ""; // e.g. "mqtt://host:1883"
+static char mqtt_user_val[32] = "";
+static char mqtt_pass_val[32] = "";
+static uint8_t printspy_en_val = 0;
+static char printspy_topic_val[80] = DEFAULT_PRINTSPY_TOPIC;
+// Independent dwell time per display-rotation slot - see main/display_rotation.c.
+static uint16_t clock_secs_val = DEFAULT_CLOCK_SECS;
+static uint16_t printer_secs_val = DEFAULT_PRINTER_SECS;
+static uint16_t weather_secs_val = DEFAULT_WEATHER_SECS;
+static uint8_t weather_enabled_val = 0;
+static char ow_api_key_val[48] = "";
+static char weather_zip_val[16] = "";
+static uint8_t weather_units_val = DEFAULT_WEATHER_UNITS;
+static uint16_t weather_fields_val = DEFAULT_WEATHER_FIELDS;
+static uint8_t bright_sched_en_val = 0;
+static uint8_t dim_hour_val = DEFAULT_DIM_HOUR;
+static uint8_t dim_min_val = DEFAULT_DIM_MIN;
+static uint8_t dim_brightness_val = DEFAULT_DIM_BRIGHTNESS;
+static uint8_t bright_hour_val = DEFAULT_BRIGHT_HOUR;
+static uint8_t bright_min_val = DEFAULT_BRIGHT_MIN;
 
 #define LOAD_NVS_SCALAR(nvs_get_fn, key, dest)                              \
   do {                                                                       \
@@ -63,6 +117,34 @@ static char clock_tz_val[64] = ""; // empty = UTC
   nvs_close(handle);                                                        \
   if (err == ESP_OK)                                                        \
     dest = val;                                                             \
+  return err;
+
+// String counterparts to the two macros above - strings don't fit
+// LOAD_NVS_SCALAR's &(dest) pattern (nvs_get_str needs a separate in/out
+// length param) or SCALAR_SETTER's plain assignment (needs a bounds
+// check + strncpy instead of `dest = val`).
+#define LOAD_NVS_STRING(key, dest)                                          \
+  do {                                                                       \
+    size_t len = sizeof(dest);                                              \
+    err = nvs_get_str(handle, key, dest, &len);                            \
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {                   \
+      return err;                                                           \
+    }                                                                        \
+  } while (0)
+
+#define STRING_SETTER(key, dest, val)                                       \
+  if (!(val) || strlen(val) >= sizeof(dest))                               \
+    return ESP_ERR_INVALID_ARG;                                            \
+  nvs_handle_t handle;                                                      \
+  esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);         \
+  if (err != ESP_OK)                                                        \
+    return err;                                                             \
+  err = nvs_set_str(handle, key, val);                                     \
+  nvs_close(handle);                                                        \
+  if (err == ESP_OK) {                                                      \
+    strncpy(dest, val, sizeof(dest) - 1);                                  \
+    dest[sizeof(dest) - 1] = '\0';                                         \
+  }                                                                          \
   return err;
 
 esp_err_t kaleidobox_nvs_init(void) {
@@ -85,21 +167,30 @@ esp_err_t kaleidobox_nvs_init(void) {
   LOAD_NVS_SCALAR(nvs_get_u32, NVS_ID_CLOCK_COLOR, clock_color_val);
   LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_CLOCK_SCALE, clock_scale_val);
   LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_CLOCK_24H, clock_24h_val);
+  LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_PRINTSPY_EN, printspy_en_val);
+  LOAD_NVS_SCALAR(nvs_get_u16, NVS_ID_CLOCK_SECS, clock_secs_val);
+  LOAD_NVS_SCALAR(nvs_get_u16, NVS_ID_PRINTER_SECS, printer_secs_val);
+  LOAD_NVS_SCALAR(nvs_get_u16, NVS_ID_WEATHER_SECS, weather_secs_val);
+  LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_WEATHER_ENABLED, weather_enabled_val);
+  LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_WEATHER_UNITS, weather_units_val);
+  LOAD_NVS_SCALAR(nvs_get_u16, NVS_ID_WEATHER_FIELDS, weather_fields_val);
+  LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_BRIGHT_SCHED_EN, bright_sched_en_val);
+  LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_DIM_HOUR, dim_hour_val);
+  LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_DIM_MIN, dim_min_val);
+  LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_DIM_BRIGHTNESS, dim_brightness_val);
+  LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_BRIGHT_HOUR, bright_hour_val);
+  LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_BRIGHT_MIN, bright_min_val);
 
-  // Strings don't fit LOAD_NVS_SCALAR's &(dest) pattern - nvs_get_str
-  // needs a separate in/out length param. Left at their compiled-in
-  // defaults (already assigned above) on ESP_ERR_NVS_NOT_FOUND, same as
-  // every scalar default here.
-  size_t ntp_server_len = sizeof(ntp_server_val);
-  err = nvs_get_str(handle, NVS_ID_NTP_SERVER, ntp_server_val, &ntp_server_len);
-  if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
-    return err;
-  }
-  size_t clock_tz_len = sizeof(clock_tz_val);
-  err = nvs_get_str(handle, NVS_ID_CLOCK_TZ, clock_tz_val, &clock_tz_len);
-  if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
-    return err;
-  }
+  // Left at their compiled-in defaults (already assigned above) on
+  // ESP_ERR_NVS_NOT_FOUND, same as every scalar default here.
+  LOAD_NVS_STRING(NVS_ID_NTP_SERVER, ntp_server_val);
+  LOAD_NVS_STRING(NVS_ID_CLOCK_TZ, clock_tz_val);
+  LOAD_NVS_STRING(NVS_ID_MQTT_BROKER, mqtt_broker_val);
+  LOAD_NVS_STRING(NVS_ID_MQTT_USER, mqtt_user_val);
+  LOAD_NVS_STRING(NVS_ID_MQTT_PASS, mqtt_pass_val);
+  LOAD_NVS_STRING(NVS_ID_PRINTSPY_TOPIC, printspy_topic_val);
+  LOAD_NVS_STRING(NVS_ID_OW_API_KEY, ow_api_key_val);
+  LOAD_NVS_STRING(NVS_ID_WEATHER_ZIP, weather_zip_val);
 
   nvs_close(handle);
 
@@ -168,38 +259,108 @@ esp_err_t kaleidobox_nvs_set_clock_24h(bool enable) {
 
 const char *kaleidobox_nvs_get_ntp_server(void) { return ntp_server_val; }
 esp_err_t kaleidobox_nvs_set_ntp_server(const char *server) {
-  if (!server || strlen(server) >= sizeof(ntp_server_val)) {
-    return ESP_ERR_INVALID_ARG;
-  }
-  nvs_handle_t handle;
-  esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
-  if (err != ESP_OK) {
-    return err;
-  }
-  err = nvs_set_str(handle, NVS_ID_NTP_SERVER, server);
-  nvs_close(handle);
-  if (err == ESP_OK) {
-    strncpy(ntp_server_val, server, sizeof(ntp_server_val) - 1);
-    ntp_server_val[sizeof(ntp_server_val) - 1] = '\0';
-  }
-  return err;
+  STRING_SETTER(NVS_ID_NTP_SERVER, ntp_server_val, server)
 }
 
 const char *kaleidobox_nvs_get_clock_tz(void) { return clock_tz_val; }
 esp_err_t kaleidobox_nvs_set_clock_tz(const char *tz) {
-  if (!tz || strlen(tz) >= sizeof(clock_tz_val)) {
-    return ESP_ERR_INVALID_ARG;
-  }
-  nvs_handle_t handle;
-  esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
-  if (err != ESP_OK) {
-    return err;
-  }
-  err = nvs_set_str(handle, NVS_ID_CLOCK_TZ, tz);
-  nvs_close(handle);
-  if (err == ESP_OK) {
-    strncpy(clock_tz_val, tz, sizeof(clock_tz_val) - 1);
-    clock_tz_val[sizeof(clock_tz_val) - 1] = '\0';
-  }
-  return err;
+  STRING_SETTER(NVS_ID_CLOCK_TZ, clock_tz_val, tz)
+}
+
+const char *kaleidobox_nvs_get_mqtt_broker(void) { return mqtt_broker_val; }
+esp_err_t kaleidobox_nvs_set_mqtt_broker(const char *broker) {
+  STRING_SETTER(NVS_ID_MQTT_BROKER, mqtt_broker_val, broker)
+}
+
+const char *kaleidobox_nvs_get_mqtt_user(void) { return mqtt_user_val; }
+esp_err_t kaleidobox_nvs_set_mqtt_user(const char *user) {
+  STRING_SETTER(NVS_ID_MQTT_USER, mqtt_user_val, user)
+}
+
+const char *kaleidobox_nvs_get_mqtt_pass(void) { return mqtt_pass_val; }
+esp_err_t kaleidobox_nvs_set_mqtt_pass(const char *pass) {
+  STRING_SETTER(NVS_ID_MQTT_PASS, mqtt_pass_val, pass)
+}
+
+bool kaleidobox_nvs_get_printspy_enabled(void) { return printspy_en_val != 0; }
+esp_err_t kaleidobox_nvs_set_printspy_enabled(bool enable) {
+  uint8_t v = enable ? 1 : 0;
+  SCALAR_SETTER(nvs_set_u8, NVS_ID_PRINTSPY_EN, printspy_en_val, v)
+}
+
+const char *kaleidobox_nvs_get_printspy_topic(void) { return printspy_topic_val; }
+esp_err_t kaleidobox_nvs_set_printspy_topic(const char *topic) {
+  STRING_SETTER(NVS_ID_PRINTSPY_TOPIC, printspy_topic_val, topic)
+}
+
+uint16_t kaleidobox_nvs_get_clock_secs(void) { return clock_secs_val; }
+esp_err_t kaleidobox_nvs_set_clock_secs(uint16_t seconds) {
+  SCALAR_SETTER(nvs_set_u16, NVS_ID_CLOCK_SECS, clock_secs_val, seconds)
+}
+
+uint16_t kaleidobox_nvs_get_printer_secs(void) { return printer_secs_val; }
+esp_err_t kaleidobox_nvs_set_printer_secs(uint16_t seconds) {
+  SCALAR_SETTER(nvs_set_u16, NVS_ID_PRINTER_SECS, printer_secs_val, seconds)
+}
+
+uint16_t kaleidobox_nvs_get_weather_secs(void) { return weather_secs_val; }
+esp_err_t kaleidobox_nvs_set_weather_secs(uint16_t seconds) {
+  SCALAR_SETTER(nvs_set_u16, NVS_ID_WEATHER_SECS, weather_secs_val, seconds)
+}
+
+bool kaleidobox_nvs_get_weather_enabled(void) { return weather_enabled_val != 0; }
+esp_err_t kaleidobox_nvs_set_weather_enabled(bool enable) {
+  uint8_t v = enable ? 1 : 0;
+  SCALAR_SETTER(nvs_set_u8, NVS_ID_WEATHER_ENABLED, weather_enabled_val, v)
+}
+
+const char *kaleidobox_nvs_get_ow_api_key(void) { return ow_api_key_val; }
+esp_err_t kaleidobox_nvs_set_ow_api_key(const char *key) {
+  STRING_SETTER(NVS_ID_OW_API_KEY, ow_api_key_val, key)
+}
+
+const char *kaleidobox_nvs_get_weather_zip(void) { return weather_zip_val; }
+esp_err_t kaleidobox_nvs_set_weather_zip(const char *zip) {
+  STRING_SETTER(NVS_ID_WEATHER_ZIP, weather_zip_val, zip)
+}
+
+uint8_t kaleidobox_nvs_get_weather_units(void) { return weather_units_val; }
+esp_err_t kaleidobox_nvs_set_weather_units(uint8_t units) {
+  SCALAR_SETTER(nvs_set_u8, NVS_ID_WEATHER_UNITS, weather_units_val, units)
+}
+
+uint16_t kaleidobox_nvs_get_weather_fields(void) { return weather_fields_val; }
+esp_err_t kaleidobox_nvs_set_weather_fields(uint16_t fields) {
+  SCALAR_SETTER(nvs_set_u16, NVS_ID_WEATHER_FIELDS, weather_fields_val, fields)
+}
+
+bool kaleidobox_nvs_get_brightness_schedule_enabled(void) { return bright_sched_en_val != 0; }
+esp_err_t kaleidobox_nvs_set_brightness_schedule_enabled(bool enable) {
+  uint8_t v = enable ? 1 : 0;
+  SCALAR_SETTER(nvs_set_u8, NVS_ID_BRIGHT_SCHED_EN, bright_sched_en_val, v)
+}
+
+uint8_t kaleidobox_nvs_get_dim_hour(void) { return dim_hour_val; }
+esp_err_t kaleidobox_nvs_set_dim_hour(uint8_t hour) {
+  SCALAR_SETTER(nvs_set_u8, NVS_ID_DIM_HOUR, dim_hour_val, hour)
+}
+
+uint8_t kaleidobox_nvs_get_dim_min(void) { return dim_min_val; }
+esp_err_t kaleidobox_nvs_set_dim_min(uint8_t min) {
+  SCALAR_SETTER(nvs_set_u8, NVS_ID_DIM_MIN, dim_min_val, min)
+}
+
+uint8_t kaleidobox_nvs_get_dim_brightness(void) { return dim_brightness_val; }
+esp_err_t kaleidobox_nvs_set_dim_brightness(uint8_t brightness) {
+  SCALAR_SETTER(nvs_set_u8, NVS_ID_DIM_BRIGHTNESS, dim_brightness_val, brightness)
+}
+
+uint8_t kaleidobox_nvs_get_bright_hour(void) { return bright_hour_val; }
+esp_err_t kaleidobox_nvs_set_bright_hour(uint8_t hour) {
+  SCALAR_SETTER(nvs_set_u8, NVS_ID_BRIGHT_HOUR, bright_hour_val, hour)
+}
+
+uint8_t kaleidobox_nvs_get_bright_min(void) { return bright_min_val; }
+esp_err_t kaleidobox_nvs_set_bright_min(uint8_t min) {
+  SCALAR_SETTER(nvs_set_u8, NVS_ID_BRIGHT_MIN, bright_min_val, min)
 }
