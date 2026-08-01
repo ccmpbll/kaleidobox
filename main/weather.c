@@ -3,6 +3,7 @@
 #include "cJSON.h"
 #include "canvas.h"
 #include "esp_crt_bundle.h"
+#include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "font_5x7.h"
@@ -66,7 +67,13 @@ static bool fetch_weather(weather_data_t *out) {
   esp_http_client_fetch_headers(client);
   int status = esp_http_client_get_status_code(client);
 
-  char *body = malloc(RESPONSE_BUF_SIZE);
+  // MALLOC_CAP_SPIRAM - same internal-RAM-starvation class already
+  // fixed elsewhere: 4KB is under CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL's
+  // threshold, and this is held for the whole HTTPS round-trip -
+  // concurrently with the TLS handshake's own real memory needs, the
+  // exact overlap this project has already hit once
+  // (CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC's own history).
+  char *body = heap_caps_malloc(RESPONSE_BUF_SIZE, MALLOC_CAP_SPIRAM);
   if (!body) {
     esp_http_client_close(client);
     esp_http_client_cleanup(client);

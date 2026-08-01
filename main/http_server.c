@@ -498,8 +498,11 @@ static esp_err_t canvas_submit_post_handler(httpd_req_t *req) {
   // kaleidobox_http_server_start's config.stack_size). A stack buffer
   // this size was silently corrupting the task stack on every
   // submit/clear - real bug, not hypothetical, matches the "breaks
-  // until refresh" symptom.
-  uint8_t *buf = malloc(expected);
+  // until refresh" symptom. MALLOC_CAP_SPIRAM, not plain malloc() - same
+  // internal-RAM-starvation class already fixed elsewhere (12KB is
+  // under CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL's threshold), and this
+  // handler runs on every draw-then-submit and every Clear press.
+  uint8_t *buf = heap_caps_malloc(expected, MALLOC_CAP_SPIRAM);
   if (!buf) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
