@@ -101,8 +101,14 @@ static esp_err_t log_worker_init(void) {
   if (!log_worker_free || !log_worker_queue) {
     return ESP_ERR_NO_MEM;
   }
-  if (xTaskCreate(log_worker_task, "log_worker", 4096, NULL,
-                  tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
+  // Pinned to core 0 with the main httpd task, not left unpinned - same
+  // networking-work-stays-off-core-1 reasoning (see
+  // kaleidobox_http_server_start's config.core_id comment). This task
+  // streams the live log console over the network same as any other
+  // handler; no reason for it to risk landing on the core kaleidoscope/
+  // gallery/rotation are pinned to.
+  if (xTaskCreatePinnedToCore(log_worker_task, "log_worker", 4096, NULL,
+                              tskIDLE_PRIORITY + 1, NULL, 0) != pdPASS) {
     ESP_LOGE(TAG, "xTaskCreate(log_worker) failed");
     return ESP_ERR_NO_MEM;
   }
@@ -1321,6 +1327,19 @@ esp_err_t kaleidobox_http_server_start(void) {
 
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.stack_size = 8192;
+  // HTTPD_DEFAULT_CONFIG() leaves core_id at tskNO_AFFINITY - unpinned,
+  // free to land on core 1 alongside kaleidoscope (25fps, continuous),
+  // gallery_bg_task, and display_rotation's rotation_task, all
+  // deliberately pinned there (see their own xTaskCreatePinnedToCore
+  // comments) specifically to stay off WiFi's core 0. This one request-
+  // handling task serves every synchronous route (everything except
+  // /api/logs, which already has its own log_worker_task) - if it lands
+  // on core 1 it directly competes with those for CPU, and confirmed
+  // live: EVERY response got uniformly slow (a 43KB static image taking
+  // 5-80s, small JSON settings fetches taking multiple seconds), not
+  // just handlers that touch shared locks. Pin to core 0, alongside
+  // WiFi/LWIP - this task fundamentally IS networking work.
+  config.core_id = 0;
   // Default max_uri_handlers is 8 - we register more than that (root,
   // settings page, logo, icon, status, logs, wifi, ota, ws/draw, canvas
   // get/submit, kaleidoscope x2, clock x2, brightness x2, gallery x10,
