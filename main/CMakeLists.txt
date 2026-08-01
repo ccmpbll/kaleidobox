@@ -29,6 +29,7 @@ idf_component_register(
   EMBED_FILES
     "../web/kaleidobox.png"
     "../web/icon-512.png"
+    "boot_logo.raw"
   REQUIRES
     app_update
     bootloader_support

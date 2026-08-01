@@ -2,6 +2,9 @@
 #include "clock.h"
 #include "display_rotation.h"
 #include "esp_log.h"
+#include "font_5x7.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "gallery.h"
 #include "kaleidoscope.h"
 #include "log.h"
@@ -13,6 +16,14 @@
 #include "wifi.h"
 
 static const char *TAG = "kaleidobox";
+
+// Pre-baked once offline from web/kaleidobox.png (same "generate once
+// via Pillow, don't fight it at runtime" approach icon-512.png already
+// uses) - raw RGB888, CANVAS_WIDTH*CANVAS_HEIGHT*3 bytes, logo
+// composited onto a black background and centered. No PNG decode step
+// needed at boot; this is already the exact format
+// kaleidobox_matrix_draw_rgb888() wants.
+extern const uint8_t boot_logo_raw_start[] asm("_binary_boot_logo_raw_start");
 
 void app_main(void) {
   // Absolute first thing, before logging/NVS/anything else - the panel's
@@ -26,6 +37,15 @@ void app_main(void) {
   // cover the ROM-bootloader window before app_main even starts - that's
   // outside app code's control.
   ESP_ERROR_CHECK(kaleidobox_matrix_init());
+
+  // Boot splash - logo + "KaleidoBox" held for 5s before anything else
+  // touches the panel or the rest of boot proceeds (user-requested: the
+  // whole point is this is the very first thing shown, not raced
+  // against WiFi connecting or anything else). Blocking here is
+  // deliberate - nothing else has started yet to race against.
+  kaleidobox_matrix_draw_rgb888(boot_logo_raw_start, CANVAS_WIDTH, CANVAS_HEIGHT);
+  kaleidobox_font_draw_text_centered(49, "KaleidoBox", 255, 255, 255);
+  vTaskDelay(pdMS_TO_TICKS(5000));
 
   // First of the rest, so the live log console can show everything from
   // here onward.
