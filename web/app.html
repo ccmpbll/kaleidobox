@@ -115,6 +115,18 @@
     button,.uploadLabel{padding:9px 12px;font-size:.85rem;}
     .controls{gap:8px;}
   }
+  /* Tablet/landscape - a 560px single column just centers itself with
+     large dead margins on an iPad (~1024px wide), none of the extra
+     width used. Two columns instead: Draw (fixed at its own natural
+     max width, matching the canvas) alongside Kaleidoscope+Gallery
+     stacked in the remaining space. #layout/.col-draw/.col-side are
+     plain block containers below this width - normal document flow,
+     Draw->Kaleidoscope->Gallery top to bottom, so mobile is unaffected. */
+  @media (min-width:900px){
+    body{max-width:1100px;}
+    #layout{display:grid;grid-template-columns:560px 1fr;gap:16px;
+      align-items:start;}
+  }
 </style>
 </head>
 <body>
@@ -129,6 +141,8 @@
   <a class="settingsLink" href="/settings">Settings</a>
 </div>
 
+<div id="layout">
+<div class="col-draw">
 <div class="section">
   <h2>Draw</h2>
   <div class="canvasWrap">
@@ -142,7 +156,9 @@
     <button type="button" class="danger" id="clear" style="margin-left:auto;">CLEAR/STOP</button>
   </div>
 </div>
+</div>
 
+<div class="col-side">
 <div class="section">
   <h2>Kaleidoscope</h2>
   <p class="sub">Animates whatever's currently on the panel (drawn or uploaded).</p>
@@ -179,6 +195,8 @@
   <p id="gallerySpace" class="sub" style="margin-top:10px;"></p>
 
   <div id="galleryList"></div>
+</div>
+</div>
 </div>
 <script>
 (function () {
