@@ -61,6 +61,17 @@ CONFIG_LWIP_TCP_SND_BUF_DEFAULT=65535
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=32
 CONFIG_LWIP_TCP_SNDMBOX_SIZE=32
 
+# Every other background task in this codebase (kaleidoscope, gallery_bg,
+# display_rotation) is explicitly pinned to core 1, opposite WiFi/httpd's
+# core 0, specifically to avoid contending with network processing (see
+# each task's own xTaskCreatePinnedToCore comment). esp-mqtt's own client
+# task (printspy.c's MQTT connection) is the one exception - it's created
+# internally by the esp-mqtt component, not our own xTaskCreate call, and
+# defaults to unpinned (tskNO_AFFINITY) unless explicitly told otherwise.
+# Pinned here to match this codebase's own established convention.
+CONFIG_MQTT_TASK_CORE_SELECTION_ENABLED=y
+CONFIG_MQTT_USE_CORE_1=y
+
 # Default FATFS config (CONFIG_FATFS_LFN_NONE) is 8.3 short names only -
 # confirmed on real hardware: gallery.c saved a file as "red.raw" and it
 # came back as "RED.RAW" on disk. Not just cosmetic - 8.3 also caps the

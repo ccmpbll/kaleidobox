@@ -2,6 +2,7 @@
 
 #include "brightness_schedule.h"
 #include "canvas.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -42,7 +43,13 @@ static esp_err_t load_file_into_canvas(const char *path) {
   if (!f) {
     return ESP_ERR_NOT_FOUND;
   }
-  uint8_t *buf = malloc(BUF_SIZE);
+  // MALLOC_CAP_SPIRAM - same class of internal-RAM-starvation bug found
+  // and fixed in kaleidoscope.c/http_server.c: 12KB is under
+  // CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL's threshold, so a plain
+  // malloc() would land here regardless of PSRAM headroom, and this
+  // runs on every gallery next/prev/restore - no DMA requirement, it's
+  // just handed to kaleidobox_canvas_set_all().
+  uint8_t *buf = heap_caps_malloc(BUF_SIZE, MALLOC_CAP_SPIRAM);
   if (!buf) {
     fclose(f);
     return ESP_ERR_NO_MEM;

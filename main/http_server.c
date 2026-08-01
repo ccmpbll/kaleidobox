@@ -1141,7 +1141,14 @@ static esp_err_t gallery_image_get_handler(httpd_req_t *req) {
 
   // Heap, not stack - same 12288-byte-on-8192-byte-httpd-task-stack
   // class of bug already caught (and fixed) elsewhere in this file.
-  uint8_t *buf = malloc(CANVAS_WIDTH * CANVAS_HEIGHT * 3);
+  // MALLOC_CAP_SPIRAM, not plain malloc() - this is pure transfer data,
+  // no DMA requirement, but under CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL's
+  // 16KB threshold a plain malloc() would still land it in the small
+  // internal/DMA-capable heap regardless (same class of bug already
+  // found and fixed in kaleidoscope.c's frame/copy buffers). A gallery
+  // page loads several thumbnails concurrently, each one of these -
+  // worth avoiding the same starvation risk here too.
+  uint8_t *buf = heap_caps_malloc(CANVAS_WIDTH * CANVAS_HEIGHT * 3, MALLOC_CAP_SPIRAM);
   if (!buf) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
@@ -1299,7 +1306,8 @@ static esp_err_t gallery_upload_post_handler(httpd_req_t *req) {
     return ESP_FAIL;
   }
 
-  uint8_t *resized = malloc(CANVAS_WIDTH * CANVAS_HEIGHT * 3);
+  // MALLOC_CAP_SPIRAM - see gallery_image_get_handler's comment above.
+  uint8_t *resized = heap_caps_malloc(CANVAS_WIDTH * CANVAS_HEIGHT * 3, MALLOC_CAP_SPIRAM);
   if (!resized) {
     kaleidobox_image_free(&img);
     httpd_resp_send_500(req);
