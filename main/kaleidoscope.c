@@ -27,6 +27,16 @@ static const char *TAG = "kaleidoscope";
 static TaskHandle_t g_task = NULL;
 static SemaphoreHandle_t g_task_exited = NULL;
 static volatile bool g_should_run = false;
+// Guards the check-then-create/stop sequence in start()/stop_task()
+// against two callers racing (the httpd task via an explicit
+// /api/kaleidoscope request, and display_rotation.c's rotation_task via
+// panel_takeover.c's transient pause/resume) - without this, both could
+// see g_task==NULL at once and each create their own task, with the
+// second xTaskCreatePinnedToCore() silently overwriting g_task and
+// leaking the first task (confirmed: it also desyncs g_task_exited's
+// count, since both takes succeed but only one give per real task
+// exists).
+static SemaphoreHandle_t g_task_mutex = NULL;
 
 static kaleidobox_image_t g_source = {0}; // owns a copy - caller's buffer
                                           // may not outlive this call
@@ -193,6 +203,11 @@ esp_err_t kaleidobox_kaleidoscope_init(void) {
     return ESP_ERR_NO_MEM;
   }
 
+  g_task_mutex = xSemaphoreCreateMutex();
+  if (!g_task_mutex) {
+    return ESP_ERR_NO_MEM;
+  }
+
   ESP_LOGI(TAG, "kaleidoscope_init");
   return ESP_OK;
 }
@@ -202,6 +217,12 @@ esp_err_t kaleidobox_kaleidoscope_start(const kaleidobox_image_t *source) {
     return ESP_ERR_INVALID_ARG;
   }
 
+  // Held for the whole check-then-create sequence below, not just
+  // individual statements - see g_task_mutex's own comment for the race
+  // this closes (two tasks both seeing g_task==NULL and both creating
+  // an animation task, one silently leaking).
+  xSemaphoreTake(g_task_mutex, portMAX_DELAY);
+
   stop_task(); // clean restart if already running - about to set the NVS flag true below anyway
 
   // Deep copy - the caller's buffer (e.g. a stack kaleidobox_image_t
@@ -210,6 +231,7 @@ esp_err_t kaleidobox_kaleidoscope_start(const kaleidobox_image_t *source) {
   size_t size = (size_t)source->width * source->height * 3;
   uint8_t *copy = malloc(size);
   if (!copy) {
+    xSemaphoreGive(g_task_mutex);
     return ESP_ERR_NO_MEM;
   }
   memcpy(copy, source->rgb888, size);
@@ -238,10 +260,12 @@ esp_err_t kaleidobox_kaleidoscope_start(const kaleidobox_image_t *source) {
     g_should_run = false;
     g_task = NULL;
     xSemaphoreGive(g_task_exited);
+    xSemaphoreGive(g_task_mutex);
     return ESP_ERR_NO_MEM;
   }
 
   kaleidobox_nvs_set_kaleido_running(true);
+  xSemaphoreGive(g_task_mutex);
 
   ESP_LOGI(TAG, "kaleidoscope started (%ux%u source, fold=%u)", source->width,
           source->height, kaleidobox_nvs_get_fold_count());
@@ -290,15 +314,21 @@ static void stop_task(void) {
   // canvas.c's own buffer still holds whatever was on the panel before
   // the animation started, untouched. Re-push it so the panel goes back
   // to the original image instead of freezing on the last animated
-  // frame.
-  kaleidobox_canvas_set_all(kaleidobox_canvas_buffer());
+  // frame - repaint(), not set_all(), since nothing actually changed.
+  kaleidobox_canvas_repaint();
 }
 
 void kaleidobox_kaleidoscope_stop(void) {
+  xSemaphoreTake(g_task_mutex, portMAX_DELAY);
   stop_task();
   kaleidobox_nvs_set_kaleido_running(false);
+  xSemaphoreGive(g_task_mutex);
 }
 
-void kaleidobox_kaleidoscope_stop_transient(void) { stop_task(); }
+void kaleidobox_kaleidoscope_stop_transient(void) {
+  xSemaphoreTake(g_task_mutex, portMAX_DELAY);
+  stop_task();
+  xSemaphoreGive(g_task_mutex);
+}
 
 bool kaleidobox_kaleidoscope_is_running(void) { return g_task != NULL; }

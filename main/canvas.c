@@ -2,6 +2,7 @@
 
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
 #include "kaleidoscope.h"
 #include "matrix.h"
 #include <string.h>
@@ -13,6 +14,15 @@ static bool g_dirty = false;
 // since esp_timer_get_time() starts near 0 at boot too - a device that's
 // never seen a draw shouldn't block takeovers forever.
 static int64_t g_last_draw_activity_us = 0;
+// Guards g_last_draw_activity_us - written from the httpd task
+// (mark_draw_activity, on every real draw) and read from
+// display_rotation.c's rotation_task (ms_since_draw_activity, via
+// panel_takeover.c's begin()). On 32-bit Xtensa a plain int64_t store/
+// load is two 32-bit instructions, not atomic - an unsynchronized read
+// during a concurrent write could observe a torn (part-old/part-new)
+// value, wrongly reporting "no recent draw activity" and letting a
+// takeover yank the panel mid-draw.
+static portMUX_TYPE g_draw_activity_mux = portMUX_INITIALIZER_UNLOCKED;
 
 esp_err_t kaleidobox_canvas_init(void) {
   memset(g_buffer, 0, sizeof(g_buffer));
@@ -38,30 +48,14 @@ const uint8_t *kaleidobox_canvas_buffer(void) { return g_buffer; }
 
 void kaleidobox_canvas_flip(void) { kaleidobox_matrix_flip(); }
 
-void kaleidobox_canvas_set_all(const uint8_t *rgb888) {
-  // Several callers (panel_takeover.c's end(), kaleidoscope_stop(),
-  // wifi.c's boot-time IP display) pass kaleidobox_canvas_buffer()
-  // right back in here purely to repaint the matrix from whatever the
-  // canvas already holds - not an actual content change. Marking dirty
-  // for those was a real bug: every display-rotation lap (see
-  // display_rotation.c) triggered a pointless
-  // autosave write to SD of data that hadn't changed, competing for
-  // the same small internal DMA-capable heap TLS uses - confirmed live
-  // as intermittent "not enough mem" SD read failures. Only a genuine
-  // new buffer (gallery load, canvas submit, upload - anything that
-  // isn't g_buffer itself) is a real change worth saving.
-  if (rgb888 != g_buffer) {
-    memcpy(g_buffer, rgb888, sizeof(g_buffer));
-    g_dirty = true;
-  }
+// Shared tail of set_all()/repaint() below: push g_buffer to the matrix
+// and, if kaleidoscope is running, feed it the same content as its
+// source - kaleidoscope samples from its own private copy (see
+// kaleidoscope.c), so skipping this would mean a canvas change gets
+// silently overwritten by kaleidoscope's very next frame instead of
+// actually taking effect.
+static void repaint_matrix_and_resume_kaleidoscope(void) {
   kaleidobox_matrix_draw_rgb888(g_buffer, CANVAS_WIDTH, CANVAS_HEIGHT);
-
-  // Kaleidoscope samples from its own private copy of the source image
-  // (see kaleidoscope.c), so a canvas change here would otherwise get
-  // overwritten by kaleidoscope's very next frame instead of actually
-  // taking effect - covers gallery show/next/prev, draw-then-submit,
-  // upload, and clear, since they all funnel through here. No-op if
-  // kaleidoscope isn't running.
   if (kaleidobox_kaleidoscope_is_running()) {
     kaleidobox_image_t source = {
         .rgb888 = g_buffer,
@@ -72,14 +66,41 @@ void kaleidobox_canvas_set_all(const uint8_t *rgb888) {
   }
 }
 
+void kaleidobox_canvas_set_all(const uint8_t *rgb888) {
+  memcpy(g_buffer, rgb888, sizeof(g_buffer));
+  g_dirty = true;
+  repaint_matrix_and_resume_kaleidoscope();
+}
+
+// Re-pushes whatever g_buffer already holds to the matrix (and resumes
+// kaleidoscope from it), without marking the canvas dirty - for callers
+// that are restoring/repainting existing content (panel_takeover.c's
+// end(), kaleidoscope_stop(), wifi.c's boot-time IP display), not
+// applying a genuine new image. A prior version of this used
+// set_all(kaleidobox_canvas_buffer()) for the same purpose, detecting
+// "is this a repaint" via pointer identity (rgb888 == g_buffer) - that
+// worked only by coincidence of every caller passing that exact
+// pointer, and any future caller that instead passed a distinct buffer
+// with byte-identical content would have been misclassified as a real
+// change, silently reintroducing the SD-write/DMA-heap-exhaustion bug
+// this split now closes for good. Every repaint-only caller should use
+// this function; set_all() always means "this is new content."
+void kaleidobox_canvas_repaint(void) { repaint_matrix_and_resume_kaleidoscope(); }
+
 bool kaleidobox_canvas_is_dirty(void) { return g_dirty; }
 
 void kaleidobox_canvas_clear_dirty(void) { g_dirty = false; }
 
 void kaleidobox_canvas_mark_draw_activity(void) {
-  g_last_draw_activity_us = esp_timer_get_time();
+  int64_t now = esp_timer_get_time();
+  portENTER_CRITICAL(&g_draw_activity_mux);
+  g_last_draw_activity_us = now;
+  portEXIT_CRITICAL(&g_draw_activity_mux);
 }
 
 int64_t kaleidobox_canvas_ms_since_draw_activity(void) {
-  return (esp_timer_get_time() - g_last_draw_activity_us) / 1000;
+  portENTER_CRITICAL(&g_draw_activity_mux);
+  int64_t last = g_last_draw_activity_us;
+  portEXIT_CRITICAL(&g_draw_activity_mux);
+  return (esp_timer_get_time() - last) / 1000;
 }

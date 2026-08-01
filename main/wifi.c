@@ -185,7 +185,7 @@ static void ip_display_timeout_cb(void *arg) {
     return;
   }
 
-  kaleidobox_canvas_set_all(kaleidobox_canvas_buffer());
+  kaleidobox_canvas_repaint();
 
   // Resume kaleidoscope here, not at boot in main.c - both this whole
   // status sequence (connecting bars, then the IP itself) and

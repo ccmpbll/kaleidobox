@@ -727,6 +727,25 @@ static esp_err_t printspy_post_handler(httpd_req_t *req) {
     return ESP_FAIL;
   }
 
+  // Snapshot every connection-relevant value before applying the POST -
+  // stop()+start() below is a full MQTT disconnect/reconnect that also
+  // wipes all currently-tracked printer state, so it's only worth doing
+  // when something that actually matters to a live session changed, not
+  // on every save (a no-op re-save, or an edit to an unrelated field).
+  bool was_enabled = kaleidobox_nvs_get_printspy_enabled();
+  char old_broker[80];
+  strncpy(old_broker, kaleidobox_nvs_get_mqtt_broker(), sizeof(old_broker) - 1);
+  old_broker[sizeof(old_broker) - 1] = '\0';
+  char old_user[32];
+  strncpy(old_user, kaleidobox_nvs_get_mqtt_user(), sizeof(old_user) - 1);
+  old_user[sizeof(old_user) - 1] = '\0';
+  char old_pass[32];
+  strncpy(old_pass, kaleidobox_nvs_get_mqtt_pass(), sizeof(old_pass) - 1);
+  old_pass[sizeof(old_pass) - 1] = '\0';
+  char old_topic[80];
+  strncpy(old_topic, kaleidobox_nvs_get_printspy_topic(), sizeof(old_topic) - 1);
+  old_topic[sizeof(old_topic) - 1] = '\0';
+
   cJSON *item = cJSON_GetObjectItem(json, "enabled");
   if (cJSON_IsBool(item)) {
     kaleidobox_nvs_set_printspy_enabled(cJSON_IsTrue(item));
@@ -761,15 +780,24 @@ static esp_err_t printspy_post_handler(httpd_req_t *req) {
 
   cJSON_Delete(json);
 
-  // Apply immediately - stop() is a no-op if nothing's connected, and
-  // start() itself re-checks enabled/broker and no-ops if either isn't
-  // set. Together that means: turning "Enabled" off actually
-  // disconnects right now (not just "won't reconnect after the next
-  // reboot" - a real gap this used to have), and any broker/credential/
-  // topic edit reconnects fresh with the new values instead of waiting
-  // for the next boot.
-  kaleidobox_printspy_stop();
-  kaleidobox_printspy_start();
+  // Apply immediately, but only reconnect if something connection-
+  // relevant actually changed - stop() is a no-op if nothing's
+  // connected, and start() itself re-checks enabled/broker and no-ops
+  // if either isn't set, but stop() also wipes the tracked-printer
+  // table, so it's worth skipping entirely when nothing changed.
+  // Turning "Enabled" off still actually disconnects right now (not
+  // just "won't reconnect after the next reboot" - a real gap this used
+  // to have), and any broker/credential/topic edit reconnects fresh
+  // with the new values instead of waiting for the next boot.
+  bool changed = was_enabled != kaleidobox_nvs_get_printspy_enabled() ||
+                 strcmp(old_broker, kaleidobox_nvs_get_mqtt_broker()) != 0 ||
+                 strcmp(old_user, kaleidobox_nvs_get_mqtt_user()) != 0 ||
+                 strcmp(old_pass, kaleidobox_nvs_get_mqtt_pass()) != 0 ||
+                 strcmp(old_topic, kaleidobox_nvs_get_printspy_topic()) != 0;
+  if (changed) {
+    kaleidobox_printspy_stop();
+    kaleidobox_printspy_start();
+  }
 
   httpd_resp_set_type(req, "application/json");
   httpd_resp_sendstr(req, "{\"ok\":true}");

@@ -5,6 +5,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "font_5x7.h"
+#include "freertos/FreeRTOS.h"
 #include "matrix.h"
 #include "mqtt_client.h"
 #include "settings.h"
@@ -32,7 +33,17 @@ typedef struct {
 
 static printer_entry_t g_printers[MAX_PRINTERS];
 static esp_mqtt_client_handle_t g_client = NULL;
+// Guards g_printers against its three concurrent accessors: the MQTT
+// event task (handle_message, writer), display_rotation.c's
+// rotation_task (printing_count/render_printing, reader), and the httpd
+// task (kaleidobox_printspy_stop()'s memset, writer). A portMUX spinlock
+// (not a FreeRTOS semaphore) - statically initializable with no
+// separate init-ordering concern, and every critical section here is a
+// few struct-field writes/reads, short enough not to need a
+// blocking/task-switching lock.
+static portMUX_TYPE g_printers_mux = portMUX_INITIALIZER_UNLOCKED;
 
+// Caller must already hold g_printers_mux.
 static printer_entry_t *find_or_insert(int64_t id) {
   printer_entry_t *free_slot = NULL;
   for (int i = 0; i < MAX_PRINTERS; i++) {
@@ -44,16 +55,6 @@ static printer_entry_t *find_or_insert(int64_t id) {
     }
   }
   if (!free_slot) {
-    // %d, not %lld/PRId64 - this project builds with newlib-nano
-    // formatting (CONFIG_LIBC_NEWLIB_NANO_FORMAT), which doesn't
-    // support 64-bit format specifiers: passing a 64-bit arg where it
-    // expects 32-bit desyncs the rest of the varargs, corrupting
-    // whatever argument comes after (confirmed the hard way - crashed
-    // a %s right after a %lld with a real Guru Meditation LoadStoreError,
-    // see the identical fix a few lines down in handle_message).
-    // Printer ids are small in practice; a plain int cast is safe.
-    ESP_LOGW(TAG, "printer id %d dropped - table full (%d slots)", (int)id,
-             MAX_PRINTERS);
     return NULL;
   }
   memset(free_slot, 0, sizeof(*free_slot));
@@ -86,39 +87,75 @@ static void handle_message(const char *data, int len) {
     cJSON_Delete(json);
     return;
   }
-  printer_entry_t *entry = find_or_insert((int64_t)id_item->valuedouble);
-  if (!entry) {
-    cJSON_Delete(json);
-    return;
-  }
+  int64_t id = (int64_t)id_item->valuedouble;
 
-  cJSON *name = cJSON_GetObjectItem(json, "name");
-  if (cJSON_IsString(name)) {
-    strncpy(entry->name, name->valuestring, sizeof(entry->name) - 1);
-    entry->name[sizeof(entry->name) - 1] = '\0';
+  char name[32] = "";
+  cJSON *name_item = cJSON_GetObjectItem(json, "name");
+  if (cJSON_IsString(name_item)) {
+    strncpy(name, name_item->valuestring, sizeof(name) - 1);
   }
 
   cJSON *state = cJSON_GetObjectItem(json, "state");
-  entry->printing = cJSON_IsString(state) && strcmp(state->valuestring, "printing") == 0;
+  bool printing = cJSON_IsString(state) && strcmp(state->valuestring, "printing") == 0;
 
+  bool have_progress = false, have_remaining = false;
+  float progress = 0;
+  int remaining_secs = 0;
   cJSON *job = cJSON_GetObjectItem(json, "job");
   if (cJSON_IsObject(job)) {
-    cJSON *progress = cJSON_GetObjectItem(job, "progress");
-    if (cJSON_IsNumber(progress)) {
-      entry->progress = (float)progress->valuedouble;
+    cJSON *progress_item = cJSON_GetObjectItem(job, "progress");
+    if (cJSON_IsNumber(progress_item)) {
+      progress = (float)progress_item->valuedouble;
+      have_progress = true;
     }
-    cJSON *remaining = cJSON_GetObjectItem(job, "remaining_secs");
-    if (cJSON_IsNumber(remaining)) {
-      entry->remaining_secs = remaining->valueint;
+    cJSON *remaining_item = cJSON_GetObjectItem(job, "remaining_secs");
+    if (cJSON_IsNumber(remaining_item)) {
+      remaining_secs = remaining_item->valueint;
+      have_remaining = true;
     }
   }
-
-  entry->last_seen_us = esp_timer_get_time();
-  // %d, not %lld - see the identical comment in find_or_insert() above.
-  // This exact line is what actually crashed on real hardware.
-  ESP_LOGI(TAG, "printer %d (%s): %s", (int)entry->id, entry->name,
-           entry->printing ? "printing" : "not printing");
   cJSON_Delete(json);
+
+  // Parse fully into locals above, then hold g_printers_mux only for
+  // the actual table mutation - never call ESP_LOG* while holding a
+  // portMUX critical section (logging does real work - ring buffer
+  // writes, possibly blocking - unsafe/slow with interrupts disabled).
+  bool found;
+  portENTER_CRITICAL(&g_printers_mux);
+  printer_entry_t *entry = find_or_insert(id);
+  found = entry != NULL;
+  if (entry) {
+    if (name[0]) {
+      strncpy(entry->name, name, sizeof(entry->name) - 1);
+      entry->name[sizeof(entry->name) - 1] = '\0';
+    }
+    entry->printing = printing;
+    if (have_progress) {
+      entry->progress = progress;
+    }
+    if (have_remaining) {
+      entry->remaining_secs = remaining_secs;
+    }
+    entry->last_seen_us = esp_timer_get_time();
+  }
+  portEXIT_CRITICAL(&g_printers_mux);
+
+  if (!found) {
+    // %d, not %lld/PRId64 - this project builds with newlib-nano
+    // formatting (CONFIG_LIBC_NEWLIB_NANO_FORMAT), which doesn't
+    // support 64-bit format specifiers: passing a 64-bit arg where it
+    // expects 32-bit desyncs the rest of the varargs, corrupting
+    // whatever argument comes after (confirmed the hard way - crashed
+    // a %s right after a %lld with a real Guru Meditation LoadStoreError,
+    // see the identical fix a few lines down). Printer ids are small in
+    // practice; a plain int cast is safe.
+    ESP_LOGW(TAG, "printer id %d dropped - table full (%d slots)", (int)id,
+             MAX_PRINTERS);
+    return;
+  }
+  // %d, not %lld - see the comment above. This exact line is what
+  // actually crashed on real hardware.
+  ESP_LOGI(TAG, "printer %d (%s): %s", (int)id, name, printing ? "printing" : "not printing");
 }
 
 // esp-mqtt's default client buffer is 1024 bytes - a real
@@ -136,6 +173,10 @@ static void handle_message(const char *data, int len) {
 // total_data_len before parsing.
 static char *g_msg_buf = NULL;
 static int g_msg_buf_len = 0;
+// Allocated size of g_msg_buf, captured once from the FIRST fragment's
+// total_data_len and never trusted again from later fragments - see the
+// bounds check below for why.
+static int g_msg_buf_cap = 0;
 
 static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t event_id,
                                void *event_data) {
@@ -172,15 +213,34 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t event_i
       free(g_msg_buf);
       g_msg_buf = malloc(event->total_data_len);
       g_msg_buf_len = 0;
+      g_msg_buf_cap = g_msg_buf ? event->total_data_len : 0;
     }
     if (g_msg_buf) {
-      memcpy(g_msg_buf + event->current_data_offset, event->data, event->data_len);
-      g_msg_buf_len += event->data_len;
-      if (g_msg_buf_len >= event->total_data_len) {
-        ESP_LOGI(TAG, "message complete, %d bytes", g_msg_buf_len);
-        handle_message(g_msg_buf, g_msg_buf_len);
+      // Bounds check before every write, against the capacity captured
+      // from the FIRST fragment only - not event->total_data_len fresh
+      // each time. mqtt_client.h documents current_data_offset/
+      // total_data_len as plain fields with no stated guarantee that
+      // total_data_len stays constant across a delivery's fragments; a
+      // broker bug, a dropped/duplicated MQTT_EVENT_DATA callback, or
+      // any other deviation from that assumed invariant would otherwise
+      // memcpy past the end of the heap allocation with zero defense.
+      if (event->current_data_offset < 0 || event->data_len < 0 ||
+          event->current_data_offset + event->data_len > g_msg_buf_cap) {
+        ESP_LOGW(TAG, "mqtt fragment out of bounds (offset=%d len=%d cap=%d) - dropping message",
+                 event->current_data_offset, event->data_len, g_msg_buf_cap);
         free(g_msg_buf);
         g_msg_buf = NULL;
+        g_msg_buf_cap = 0;
+      } else {
+        memcpy(g_msg_buf + event->current_data_offset, event->data, event->data_len);
+        g_msg_buf_len += event->data_len;
+        if (g_msg_buf_len >= g_msg_buf_cap) {
+          ESP_LOGI(TAG, "message complete, %d bytes", g_msg_buf_len);
+          handle_message(g_msg_buf, g_msg_buf_len);
+          free(g_msg_buf);
+          g_msg_buf = NULL;
+          g_msg_buf_cap = 0;
+        }
       }
     }
     break;
@@ -243,18 +303,28 @@ static void render_printer(const printer_entry_t *p) {
   kaleidobox_font_draw_text_centered(50, remaining, 150, 150, 150);
 }
 
+// Shared by printing_count() and render_printing() below so the
+// "is this entry currently printing" definition can't drift out of sync
+// between the two - they must agree on it, since display_rotation.c
+// depends on both enumerating printers in the same order for a given
+// table state. Caller must already hold g_printers_mux.
+static bool is_printing_fresh(const printer_entry_t *e, int64_t now) {
+  return e->used && e->printing && (now - e->last_seen_us) < STALE_US;
+}
+
 // Number of tracked printers currently printing and not yet stale.
 // main/display_rotation.c calls this each tick to decide whether a
 // printer slot is available and how many there are to rotate through.
 int kaleidobox_printspy_printing_count(void) {
   int64_t now = esp_timer_get_time();
   int count = 0;
+  portENTER_CRITICAL(&g_printers_mux);
   for (int i = 0; i < MAX_PRINTERS; i++) {
-    if (g_printers[i].used && g_printers[i].printing &&
-        (now - g_printers[i].last_seen_us) < STALE_US) {
+    if (is_printing_fresh(&g_printers[i], now)) {
       count++;
     }
   }
+  portEXIT_CRITICAL(&g_printers_mux);
   return count;
 }
 
@@ -264,16 +334,28 @@ int kaleidobox_printspy_printing_count(void) {
 // a given tick. No-op if idx is out of range.
 void kaleidobox_printspy_render_printing(int idx) {
   int64_t now = esp_timer_get_time();
+  // Snapshot the matched entry under the lock, then render from the
+  // local copy after releasing it - render_printer() does real matrix
+  // I/O (several draw calls), far too slow to run inside a portMUX
+  // critical section, and this also closes the torn-read risk if
+  // kaleidobox_printspy_stop()'s memset() runs concurrently.
+  printer_entry_t snapshot;
+  bool found = false;
   int seen = 0;
+  portENTER_CRITICAL(&g_printers_mux);
   for (int i = 0; i < MAX_PRINTERS; i++) {
-    if (g_printers[i].used && g_printers[i].printing &&
-        (now - g_printers[i].last_seen_us) < STALE_US) {
+    if (is_printing_fresh(&g_printers[i], now)) {
       if (seen == idx) {
-        render_printer(&g_printers[i]);
-        return;
+        snapshot = g_printers[i];
+        found = true;
+        break;
       }
       seen++;
     }
+  }
+  portEXIT_CRITICAL(&g_printers_mux);
+  if (found) {
+    render_printer(&snapshot);
   }
 }
 
@@ -348,6 +430,8 @@ void kaleidobox_printspy_stop(void) {
   esp_mqtt_client_stop(g_client);
   esp_mqtt_client_destroy(g_client);
   g_client = NULL;
+  portENTER_CRITICAL(&g_printers_mux);
   memset(g_printers, 0, sizeof(g_printers));
+  portEXIT_CRITICAL(&g_printers_mux);
   ESP_LOGI(TAG, "printspy stopped");
 }

@@ -64,7 +64,7 @@ void kaleidobox_panel_takeover_end(void) {
   // Same restore idiom as wifi.c's ip_display_timeout_cb: repaint
   // whatever canvas.c's buffer holds, then conditionally resume
   // kaleidoscope against that same buffer.
-  kaleidobox_canvas_set_all(kaleidobox_canvas_buffer());
+  kaleidobox_canvas_repaint();
 
   if (g_was_gallery_auto) {
     kaleidobox_nvs_set_gallery_auto_advance(true);

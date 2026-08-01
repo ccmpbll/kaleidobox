@@ -26,6 +26,13 @@ const uint8_t *kaleidobox_canvas_buffer(void); // CANVAS_WIDTH*CANVAS_HEIGHT*3 b
 // set_pixel() calls - see matrix.h for why that mattered.
 void kaleidobox_canvas_set_all(const uint8_t *rgb888);
 
+// Re-pushes the canvas's existing content to the matrix (and resumes
+// kaleidoscope from it) without marking it dirty - for callers
+// restoring/repainting what's already there, not applying new content.
+// See the implementation comment in canvas.c for why this exists
+// instead of calling set_all(kaleidobox_canvas_buffer()).
+void kaleidobox_canvas_repaint(void);
+
 // Forwards to matrix.h's flip - currently a no-op (single-buffer mode,
 // see matrix.cpp). Kept for kaleidoscope mode, which will re-enable
 // double buffering and need this. Not called anywhere in draw mode.
