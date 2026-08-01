@@ -25,6 +25,13 @@ static int64_t g_slot_start_us = 0;
 // separate from g_slot, since static mode bypasses the normal slot
 // machine entirely rather than being one more slot within it.
 static bool g_static_message_active = false;
+// Deliberately RAM-only, not NVS-backed - this is session-scoped
+// intent ("stop everything so I can draw"), not a durable setting; a
+// reboot mid-pause should come back rotating normally, not stay stuck
+// paused forever. Set/cleared via kaleidobox_display_rotation_pause()/
+// _resume(), called from Clear/Stop and kaleidoscope Start respectively
+// (see http_server.c's rotation_post_handler).
+static bool g_rotation_paused = false;
 
 static void render_message(void) {
   uint32_t color = kaleidobox_nvs_get_message_color();
@@ -47,6 +54,25 @@ static void enter_clock(void) {
   g_slot = SLOT_CLOCK;
   g_slot_start_us = esp_timer_get_time();
 }
+
+// Clear/Stop's "stop everything, including the rotation, so drawing is
+// uninterrupted" - stronger than the normal draw-activity guard (a
+// brief grace window every takeover already respects), this holds
+// until explicitly resumed. Uses cancel(), not end() - the point is
+// nothing takes the panel back or gets restored, unlike a normal
+// takeover handoff.
+void kaleidobox_display_rotation_pause(void) {
+  g_rotation_paused = true;
+  g_static_message_active = false;
+  kaleidobox_panel_takeover_cancel();
+}
+
+void kaleidobox_display_rotation_resume(void) {
+  g_rotation_paused = false;
+  enter_clock();
+}
+
+bool kaleidobox_display_rotation_is_paused(void) { return g_rotation_paused; }
 
 static bool enter_printer(int idx) {
   if (!kaleidobox_panel_takeover_active() && !kaleidobox_panel_takeover_begin()) {
@@ -173,6 +199,14 @@ static void rotation_task(void *arg) {
   g_slot_start_us = esp_timer_get_time();
   while (1) {
     vTaskDelay(pdMS_TO_TICKS(TICK_MS));
+
+    // Clear/Stop's explicit "leave me alone" - checked before even
+    // static message mode. kaleidobox_display_rotation_pause() already
+    // tore down whatever was active at the moment it was called; this
+    // just holds that state, doing nothing, until _resume() clears it.
+    if (g_rotation_paused) {
+      continue;
+    }
 
     // Static message mode fully overrides the normal slot machine
     // rather than being one more slot within it - checked first, every

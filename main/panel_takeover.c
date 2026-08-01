@@ -69,7 +69,13 @@ void kaleidobox_panel_takeover_end(void) {
   if (g_was_gallery_auto) {
     kaleidobox_nvs_set_gallery_auto_advance(true);
   }
-  if (g_was_kaleido_running) {
+  // Also re-checks the CURRENT NVS flag, not just the begin()-time
+  // snapshot - if the user explicitly stopped kaleidoscope (a real
+  // kaleidobox_kaleidoscope_stop(), persisting kaleido_running=false)
+  // while this takeover happened to be active, the stale snapshot
+  // alone would wrongly resurrect it here. Both must agree: it was
+  // running when this takeover began, AND nothing has since said stop.
+  if (g_was_kaleido_running && kaleidobox_nvs_get_kaleido_running()) {
     kaleidobox_image_t source = {
         .rgb888 = (uint8_t *)kaleidobox_canvas_buffer(),
         .width = CANVAS_WIDTH,
@@ -78,5 +84,13 @@ void kaleidobox_panel_takeover_end(void) {
     kaleidobox_kaleidoscope_start(&source);
   }
 
+  g_active = false;
+}
+
+void kaleidobox_panel_takeover_cancel(void) {
+  if (!g_active) {
+    return;
+  }
+  kaleidobox_canvas_repaint();
   g_active = false;
 }

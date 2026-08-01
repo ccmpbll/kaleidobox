@@ -342,20 +342,29 @@
     gallerySaveName.value = '';
     resumeAutoAdvanceIfPaused(); // in case the save-name field left it paused
 
-    // Clear means stop everything and start fresh - kaleidoscope and
-    // gallery rotation would otherwise keep animating/cycling right
-    // over the blank canvas this is about to push. Both awaited before
-    // the actual clear, same reasoning as kaleidoscope alone used to
-    // have: kaleidoscope_stop() restores the pre-animation image, so
-    // letting that (or a rotation cycle) land after the clear would
-    // silently undo it.
-    var stopKaleido = kaleidoRunning ? sendKaleidoSettings({enabled: false}) : Promise.resolve();
-    var stopRotation = galleryAutoRunning ? (function () {
-      galleryAutoRunning = false;
-      return sendGalleryMode();
-    })() : Promise.resolve();
+    // Clear means stop EVERYTHING and start fresh - kaleidoscope,
+    // gallery auto-advance, AND the display rotation (printer/weather/
+    // message takeovers) would otherwise keep animating/cycling right
+    // over the blank canvas this is about to push. All sent
+    // unconditionally, not gated on this page's own kaleidoRunning/
+    // galleryAutoRunning tracking - the display rotation independently
+    // starts/stops kaleidoscope in the background (transient stop
+    // during a printer/weather/message takeover, resume after), which
+    // this page is never told about, so that local state can go stale;
+    // sending the stop regardless is harmless (already-stopped is a
+    // no-op server-side) and avoids silently skipping it. Rotation
+    // stays paused until kaleidoscope's own Start button resumes it
+    // (see kaleidoToggle's own handler below).
+    var stopKaleido = sendKaleidoSettings({enabled: false});
+    galleryAutoRunning = false;
+    var stopGallery = sendGalleryMode();
+    var pauseRotation = fetch('/api/rotation', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({paused: true}),
+    });
 
-    Promise.all([stopKaleido, stopRotation])
+    Promise.all([stopKaleido, stopGallery, pauseRotation])
       .then(function () {
         kaleidoRunning = false;
         kaleidoToggle.textContent = 'Start';
@@ -491,8 +500,21 @@
 
   kaleidoToggle.addEventListener('click', function () {
     kaleidoToggle.disabled = true;
-    sendKaleidoSettings({enabled: !kaleidoRunning})
-      .then(function (r) { return r.json(); })
+    var starting = !kaleidoRunning;
+    // Starting also resumes the display rotation if Clear/Stop left it
+    // paused - this is the explicit "I'm done drawing, let it cycle
+    // again" action, matching how Clear/Stop paused it in the first
+    // place. Plain Stop (not Clear) does NOT pause rotation - it just
+    // stops the animation, same as it always has.
+    var resumeRotation = starting
+      ? fetch('/api/rotation', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({paused: false}),
+        })
+      : Promise.resolve();
+    Promise.all([sendKaleidoSettings({enabled: starting}), resumeRotation])
+      .then(function (results) { return results[0].json(); })
       .then(function (s) {
         kaleidoRunning = !!s.running;
         kaleidoToggle.textContent = kaleidoRunning ? 'Stop' : 'Start';

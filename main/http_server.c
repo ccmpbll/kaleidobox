@@ -983,6 +983,7 @@ static esp_err_t rotation_get_handler(httpd_req_t *req) {
   cJSON_AddNumberToObject(root, "printer_secs", kaleidobox_nvs_get_printer_secs());
   cJSON_AddNumberToObject(root, "weather_secs", kaleidobox_nvs_get_weather_secs());
   cJSON_AddNumberToObject(root, "message_secs", kaleidobox_nvs_get_message_secs());
+  cJSON_AddBoolToObject(root, "paused", kaleidobox_display_rotation_is_paused());
 
   char *json = cJSON_PrintUnformatted(root);
   httpd_resp_set_type(req, "application/json");
@@ -1021,6 +1022,17 @@ static esp_err_t rotation_post_handler(httpd_req_t *req) {
   item = cJSON_GetObjectItem(json, "message_secs");
   if (cJSON_IsNumber(item) && item->valueint >= 0 && item->valueint <= 300) {
     kaleidobox_nvs_set_message_secs((uint16_t)item->valueint);
+  }
+  // Session-scoped ("Clear/Stop should pause everything so drawing is
+  // uninterrupted", user-reported), not a durable setting like the
+  // dwell times above - see display_rotation.h.
+  item = cJSON_GetObjectItem(json, "paused");
+  if (cJSON_IsBool(item)) {
+    if (cJSON_IsTrue(item)) {
+      kaleidobox_display_rotation_pause();
+    } else {
+      kaleidobox_display_rotation_resume();
+    }
   }
   cJSON_Delete(json);
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esp_err.h"
+#include <stdbool.h>
 
 // Owns the panel's top-level display cycle: clock (kaleidoscope/idle,
 // no takeover) -> each currently-printing printer, in turn -> weather
@@ -21,3 +22,15 @@ esp_err_t kaleidobox_display_rotation_init(void);
 // until static is toggled off and on again". No-op if the message
 // isn't the active static display right now.
 void kaleidobox_display_rotation_message_changed(void);
+
+// Clear/Stop's "stop everything, including the rotation, so I can draw
+// uninterrupted" - stronger than the existing draw-activity guard (a
+// brief grace window), holds indefinitely until _resume() is called.
+// Tears down whatever's currently showing immediately (does not wait
+// for its own dwell timer), without restoring/resuming anything -
+// callers are responsible for their own explicit stop (e.g.
+// kaleidoscope) beforehand. Session-scoped only, not NVS-backed - a
+// reboot mid-pause comes back rotating normally.
+void kaleidobox_display_rotation_pause(void);
+void kaleidobox_display_rotation_resume(void);
+bool kaleidobox_display_rotation_is_paused(void);

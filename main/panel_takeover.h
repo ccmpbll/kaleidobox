@@ -33,3 +33,11 @@ bool kaleidobox_panel_takeover_begin(void);
 // auto-advance if they were active before begin(), clears active.
 // No-op if not currently active.
 void kaleidobox_panel_takeover_end(void);
+
+// Same immediate teardown as end() (repaints the canvas, clears
+// active), but deliberately does NOT restore gallery-auto-advance or
+// resume kaleidoscope - for callers that want everything left off
+// rather than restored (display_rotation.c's pause, for uninterrupted
+// drawing - the point is nothing takes the panel back, not "put it
+// back the way it was"). No-op if not currently active.
+void kaleidobox_panel_takeover_cancel(void);
