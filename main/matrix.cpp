@@ -60,6 +60,21 @@ extern "C" esp_err_t kaleidobox_matrix_init(void) {
   Hub75Config cfg = make_config();
   driver = new Hub75Driver(cfg);
   if (!driver->begin()) {
+    // Deliberately NOT retried in-process (a tempting fix, but wrong
+    // one): esp-hub75's own GdmaDma::init() leaks the GDMA channel it
+    // already allocated on every one of its later failure paths
+    // (validate_brightness_config/allocate_row_buffers/
+    // build_descriptor_chain all `return false` with no
+    // gdma_del_channel() call - that only happens in shutdown(), never
+    // reached here since Hub75Driver::begin() returning false leaves
+    // running_ false, so ~Hub75Driver()'s end() no-ops and never frees
+    // dma_ either). A same-process retry loop would burn through
+    // ESP32-S3's small fixed GDMA channel pool within a couple of
+    // attempts and guarantee every subsequent attempt fails too - see
+    // kaleidobox_matrix_init_or_restart() in main.c for the actual
+    // fix (a bounded number of full chip restarts instead, which
+    // resets GDMA hardware state cleanly rather than reusing
+    // potentially-exhausted state in the same process).
     ESP_LOGE(TAG, "Hub75Driver::begin() failed");
     delete driver;
     driver = nullptr;

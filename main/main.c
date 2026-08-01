@@ -1,7 +1,9 @@
 #include "canvas.h"
 #include "clock.h"
 #include "display_rotation.h"
+#include "esp_attr.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "font_5x7.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -25,6 +27,54 @@ static const char *TAG = "kaleidobox";
 // kaleidobox_matrix_draw_rgb888() wants.
 extern const uint8_t boot_logo_raw_start[] asm("_binary_boot_logo_raw_start");
 
+#define MATRIX_INIT_MAX_RESTARTS 5
+
+// Survives esp_restart() (a software reset never powers down the RTC
+// domain) but must read back as 0 on a genuine power-on - forced
+// explicitly below via esp_reset_reason() rather than trusted blindly,
+// since regular .bss/.data gets re-zeroed on EVERY boot including a
+// software one (useless here - it'd never remember an in-progress
+// retry count across the very esp_restart() calls it's supposed to be
+// counting).
+RTC_NOINIT_ATTR static int s_matrix_restart_count;
+
+// User-confirmed live: an occasional cold power-on left the panel
+// fully dark, recoverable only by physically power-cycling the whole
+// board again and again - not just an MCU reset, a real power removal.
+// Root cause: Hub75Driver::begin() can fail on genuinely transient
+// conditions (GDMA channel allocation, or DMA buffer/descriptor
+// allocation - see gdma_dma.cpp::init()), and matrix.cpp's own comment
+// explains why an in-process retry loop is the WRONG fix - the
+// library's failure paths leak the GDMA channel they already grabbed,
+// so retrying in the same process would exhaust the chip's small fixed
+// GDMA channel pool within a couple of attempts and guarantee every
+// later attempt fails too. A full esp_restart() resets GDMA hardware
+// state cleanly (same reason a physical power cycle was already
+// "fixing" it) without that leak risk. Bounded, not unconditional -
+// if the panel is genuinely broken/disconnected, keep booting anyway
+// (matrix calls are already null-safe, see matrix.cpp) so the device
+// stays reachable over WiFi/HTTP instead of restart-looping forever.
+static void matrix_init_or_restart(void) {
+  if (esp_reset_reason() == ESP_RST_POWERON) {
+    s_matrix_restart_count = 0;
+  }
+  if (kaleidobox_matrix_init() == ESP_OK) {
+    s_matrix_restart_count = 0;
+    return;
+  }
+  s_matrix_restart_count++;
+  if (s_matrix_restart_count > MATRIX_INIT_MAX_RESTARTS) {
+    ESP_LOGE(TAG, "Hub75Driver init failed %d times in a row - giving up, "
+                  "panel stays dark but the rest of boot continues",
+            s_matrix_restart_count);
+    return;
+  }
+  ESP_LOGW(TAG, "Hub75Driver init failed (attempt %d/%d) - restarting the "
+                "chip for a clean retry",
+          s_matrix_restart_count, MATRIX_INIT_MAX_RESTARTS);
+  esp_restart();
+}
+
 void app_main(void) {
   // Absolute first thing, before logging/NVS/anything else - the panel's
   // LED driver ICs hold their last-latched row data across an MCU reset
@@ -36,7 +86,7 @@ void app_main(void) {
   // leftover pixels from before the reset can show through. Doesn't
   // cover the ROM-bootloader window before app_main even starts - that's
   // outside app code's control.
-  ESP_ERROR_CHECK(kaleidobox_matrix_init());
+  matrix_init_or_restart();
 
   // Boot splash - logo + "KaleidoBox" held for 5s before anything else
   // touches the panel or the rest of boot proceeds (user-requested: the
