@@ -158,6 +158,13 @@ static esp_err_t settings_page_handler(httpd_req_t *req) {
 // not strlen.
 static esp_err_t logo_png_handler(httpd_req_t *req) {
   httpd_resp_set_type(req, "image/png");
+  // Embedded in the firmware image - only changes on reflash, so a long
+  // cache lifetime is safe. Without this, every page load re-fetched it
+  // uncached (twice - favicon link + header <img> both hit this same
+  // URL), and a handful of these piling up concurrently was enough to
+  // exhaust httpd's small socket pool and stall unrelated requests for
+  // 30s+ (confirmed live - see max_open_sockets below).
+  httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=86400");
   return httpd_resp_send(req, (const char *)kaleidobox_png_start,
                          kaleidobox_png_end - kaleidobox_png_start);
 }
@@ -173,6 +180,9 @@ static esp_err_t logo_png_handler(httpd_req_t *req) {
 // runtime.
 static esp_err_t icon_512_png_handler(httpd_req_t *req) {
   httpd_resp_set_type(req, "image/png");
+  // Same reasoning as logo_png_handler above - embedded, build-fixed
+  // content, safe to cache.
+  httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=86400");
   return httpd_resp_send(req, (const char *)icon_512_png_start,
                          icon_512_png_end - icon_512_png_start);
 }
@@ -1334,11 +1344,12 @@ esp_err_t kaleidobox_http_server_start(void) {
   // comments) specifically to stay off WiFi's core 0. This one request-
   // handling task serves every synchronous route (everything except
   // /api/logs, which already has its own log_worker_task) - if it lands
-  // on core 1 it directly competes with those for CPU, and confirmed
-  // live: EVERY response got uniformly slow (a 43KB static image taking
-  // 5-80s, small JSON settings fetches taking multiple seconds), not
-  // just handlers that touch shared locks. Pin to core 0, alongside
-  // WiFi/LWIP - this task fundamentally IS networking work.
+  // on core 1 it directly competes with those for CPU. Pin to core 0,
+  // alongside WiFi/LWIP - this task fundamentally IS networking work.
+  // (Real root cause of a since-fixed "everything is slow" regression
+  // turned out to be socket-pool starvation, not this - see
+  // max_open_sockets and the Cache-Control headers on the PNG handlers
+  // above. This pin is still worth keeping on its own merits.)
   config.core_id = 0;
   // Default max_uri_handlers is 8 - we register more than that (root,
   // settings page, logo, icon, status, logs, wifi, ota, ws/draw, canvas
@@ -1347,7 +1358,15 @@ esp_err_t kaleidobox_http_server_start(void) {
   // httpd_register_uri_handler silently drops the excess - printspy-cam
   // hit this exact bug once already (see its http_server.c comment).
   config.max_uri_handlers = 33;
-  config.max_open_sockets = 7; // 1 for the log worker + 6 other concurrent connections
+  // 1 for the log worker + 12 other concurrent connections. Confirmed
+  // live: the old value (7 total, 6 available) had zero headroom over a
+  // single browser tab's own per-origin connection limit - a couple of
+  // slow image fetches (uncached PNGs, see logo_png_handler/
+  // icon_512_png_handler above) could fully occupy it and stall every
+  // other request, including plain JSON GETs, for 30s+. The real fix is
+  // the Cache-Control headers so repeat loads don't re-fetch at all;
+  // this is just headroom for the first, cold load.
+  config.max_open_sockets = 13;
   config.lru_purge_enable = true;
   // Same reasoning as printspy-cam: without TCP keepalive, a stale
   // /api/logs (or /ws/draw) connection never gets detected as dead - it

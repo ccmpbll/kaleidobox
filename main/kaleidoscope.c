@@ -2,6 +2,7 @@
 
 #include "canvas.h"
 #include "clock.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -133,7 +134,21 @@ static void render_frame(uint8_t *dst, float rotation_offset, float zoom_scale) 
 
 static void kaleidoscope_task(void *arg) {
   (void)arg;
-  uint8_t *frame = malloc(CANVAS_WIDTH * CANVAS_HEIGHT * 3);
+  // MALLOC_CAP_SPIRAM, not plain malloc() - this 12KB buffer is pure
+  // CPU-side pixel data (draw_pixels() below reads and converts it into
+  // the HUB75 driver's own internal DMA buffer, never touches this
+  // pointer itself), so it has no DMA requirement. Plain malloc() would
+  // land it in internal RAM anyway - CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL
+  // forces any allocation under 16KB there regardless of PSRAM
+  // availability - and held for the task's entire lifetime (i.e.
+  // whenever kaleidoscope is running, which is most of the time), that
+  // was eating ~12KB of an internal/DMA-capable pool confirmed live at
+  // only ~45KB total, alongside the same-sized g_source copy in
+  // start()/update_source() below. Together they starved the SD card's
+  // own DMA-capable reads ("not enough mem" failures, confirmed live,
+  // unrelated to the separate mbedTLS-vs-SD fix already in place - this
+  // one didn't touch TLS at all).
+  uint8_t *frame = heap_caps_malloc(CANVAS_WIDTH * CANVAS_HEIGHT * 3, MALLOC_CAP_SPIRAM);
   if (!frame) {
     ESP_LOGE(TAG, "no memory for frame buffer, aborting animation");
     g_should_run = false;
@@ -229,7 +244,9 @@ esp_err_t kaleidobox_kaleidoscope_start(const kaleidobox_image_t *source) {
   // wrapping the canvas buffer) isn't guaranteed to outlive this call,
   // and the animation task needs its own stable copy for its lifetime.
   size_t size = (size_t)source->width * source->height * 3;
-  uint8_t *copy = malloc(size);
+  // MALLOC_CAP_SPIRAM - see kaleidoscope_task()'s frame buffer comment;
+  // same reasoning, held for the same lifetime.
+  uint8_t *copy = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
   if (!copy) {
     xSemaphoreGive(g_task_mutex);
     return ESP_ERR_NO_MEM;
@@ -284,7 +301,8 @@ esp_err_t kaleidobox_kaleidoscope_update_source(const kaleidobox_image_t *source
   // taking the lock, so the animation task is only blocked for the
   // actual pointer swap below, not for this call's malloc/memcpy.
   size_t size = (size_t)source->width * source->height * 3;
-  uint8_t *copy = malloc(size);
+  // MALLOC_CAP_SPIRAM - see kaleidoscope_task()'s frame buffer comment.
+  uint8_t *copy = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
   if (!copy) {
     return ESP_ERR_NO_MEM;
   }

@@ -21,7 +21,23 @@ CONFIG_HTTPD_WS_SUPPORT=y
 # draw-mode WebSocket and gallery/log SSE streams each hold one open too.
 # Default (10) can starve requests under real use - same reasoning as
 # printspy-cam.
-CONFIG_LWIP_MAX_SOCKETS=16
+#
+# This is the WHOLE SYSTEM's socket budget, not just httpd's - shared
+# with weather.c's outbound HTTPS client, printspy.c's persistent MQTT
+# connection, and mDNS. httpd_server.c's own config.max_open_sockets
+# (currently 13, to give a single browser tab real headroom over its own
+# per-origin connection limit) was raised without raising this - so
+# httpd alone could claim most of a 16-socket total, confirmed live:
+# esp-tls failing to even create a socket for weather's fetch
+# ("Failed to create socket ... family 2") and httpd itself failing to
+# accept new connections, both logging errno 23 (too many open files) -
+# a real regression, not a guess. Headroom for httpd's 13 plus weather +
+# MQTT + mDNS + DNS + slack.
+CONFIG_LWIP_MAX_SOCKETS=24
+# Kept in step with MAX_SOCKETS above - a socket descriptor being
+# available doesn't help if the active-TCP-PCB table underneath it is
+# still capped lower.
+CONFIG_LWIP_MAX_ACTIVE_TCP=24
 
 # kaleidobox_http_server_start() (httpd_start + registering all ~16 URI
 # handlers) runs inline on whatever task calls it - the WiFi IP_EVENT
