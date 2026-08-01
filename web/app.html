@@ -22,11 +22,9 @@
     'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}
   h1{font-size:1.2rem;font-weight:700;margin:0;}
   #header{display:flex;align-items:center;justify-content:space-between;
-    gap:12px;flex-wrap:wrap;margin-bottom:16px;}
+    gap:12px;margin-bottom:16px;}
   .brand{display:flex;align-items:center;gap:14px;}
   .brand img{height:72px;width:auto;display:block;}
-  .brand-text{display:flex;flex-direction:column;gap:2px;}
-  .brand-text p.sub{margin:0;}
   p.sub{margin:0 0 16px;color:rgb(150,150,160);font-size:.85rem;}
   /* Each logical group (Draw, Display, Kaleidoscope, Gallery) is its own
      bounded card, not just a text heading floating in the page flow -
@@ -85,9 +83,11 @@
   .uploadLabel{padding:10px 16px;border-radius:6px;background:rgb(45,45,52);
     color:rgb(230,230,232);font-size:.9rem;font-weight:600;cursor:pointer;}
   .uploadLabel:active{opacity:.85;}
-  .settingsLink{color:rgb(140,165,255);font-size:.8rem;text-decoration:none;
-    white-space:nowrap;}
-  .settingsLink:active{opacity:.7;}
+  .settingsLink{display:inline-block;padding:10px 16px;border-radius:6px;
+    background:rgb(45,45,52);color:rgb(230,230,232);font-size:.9rem;
+    font-weight:600;text-decoration:none;white-space:nowrap;
+    flex-shrink:0;}
+  .settingsLink:active{opacity:.85;}
   #galleryList{display:flex;flex-direction:column;gap:6px;margin-top:10px;
     max-width:512px;}
   .galleryItem{display:flex;align-items:center;gap:10px;padding:8px 10px;
@@ -133,10 +133,7 @@
 <div id="header">
   <div class="brand">
     <img src="/kaleidobox.png" alt="">
-    <div class="brand-text">
-      <h1>KaleidoBox</h1>
-      <p class="sub">Draw, browse the gallery, or animate a kaleidoscope on the panel.</p>
-    </div>
+    <h1>KaleidoBox</h1>
   </div>
   <a class="settingsLink" href="/settings">Settings</a>
 </div>
