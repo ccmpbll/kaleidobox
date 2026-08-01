@@ -37,6 +37,11 @@ static const char *NVS_ID_DIM_MIN = "dim_min";
 static const char *NVS_ID_DIM_BRIGHTNESS = "dim_brightness";
 static const char *NVS_ID_BRIGHT_HOUR = "bright_hour";
 static const char *NVS_ID_BRIGHT_MIN = "bright_min";
+static const char *NVS_ID_MSG_ENABLED = "msg_enabled";
+static const char *NVS_ID_MSG_STATIC = "msg_static";
+static const char *NVS_ID_MSG_TEXT = "msg_text";
+static const char *NVS_ID_MSG_COLOR = "msg_color";
+static const char *NVS_ID_MSG_SECS = "msg_secs";
 
 // Defaults chosen so a freshly-flashed device (before any setting has
 // ever been written) behaves sensibly rather than at the extremes of
@@ -64,6 +69,8 @@ static const char *NVS_ID_BRIGHT_MIN = "bright_min";
 #define DEFAULT_DIM_BRIGHTNESS 32
 #define DEFAULT_BRIGHT_HOUR 7
 #define DEFAULT_BRIGHT_MIN 0
+#define DEFAULT_MSG_COLOR 0xFFFFFF // white
+#define DEFAULT_MSG_SECS 15 // matches DEFAULT_CLOCK_SECS - long enough to actually read
 
 static uint8_t fold_count_val = DEFAULT_FOLD_COUNT;
 static uint8_t motion_zoom_val = 0;
@@ -97,6 +104,11 @@ static uint8_t dim_min_val = DEFAULT_DIM_MIN;
 static uint8_t dim_brightness_val = DEFAULT_DIM_BRIGHTNESS;
 static uint8_t bright_hour_val = DEFAULT_BRIGHT_HOUR;
 static uint8_t bright_min_val = DEFAULT_BRIGHT_MIN;
+static uint8_t msg_enabled_val = 0;
+static uint8_t msg_static_val = 0;
+static char msg_text_val[96] = "";
+static uint32_t msg_color_val = DEFAULT_MSG_COLOR;
+static uint16_t msg_secs_val = DEFAULT_MSG_SECS;
 
 #define LOAD_NVS_SCALAR(nvs_get_fn, key, dest)                              \
   do {                                                                       \
@@ -177,6 +189,10 @@ esp_err_t kaleidobox_nvs_init(void) {
   LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_DIM_BRIGHTNESS, dim_brightness_val);
   LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_BRIGHT_HOUR, bright_hour_val);
   LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_BRIGHT_MIN, bright_min_val);
+  LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_MSG_ENABLED, msg_enabled_val);
+  LOAD_NVS_SCALAR(nvs_get_u8, NVS_ID_MSG_STATIC, msg_static_val);
+  LOAD_NVS_SCALAR(nvs_get_u32, NVS_ID_MSG_COLOR, msg_color_val);
+  LOAD_NVS_SCALAR(nvs_get_u16, NVS_ID_MSG_SECS, msg_secs_val);
 
   // Left at their compiled-in defaults (already assigned above) on
   // ESP_ERR_NVS_NOT_FOUND, same as every scalar default here.
@@ -188,6 +204,7 @@ esp_err_t kaleidobox_nvs_init(void) {
   LOAD_NVS_STRING(NVS_ID_PRINTSPY_TOPIC, printspy_topic_val);
   LOAD_NVS_STRING(NVS_ID_OW_API_KEY, ow_api_key_val);
   LOAD_NVS_STRING(NVS_ID_WEATHER_ZIP, weather_zip_val);
+  LOAD_NVS_STRING(NVS_ID_MSG_TEXT, msg_text_val);
 
   nvs_close(handle);
 
@@ -354,4 +371,31 @@ esp_err_t kaleidobox_nvs_set_bright_hour(uint8_t hour) {
 uint8_t kaleidobox_nvs_get_bright_min(void) { return bright_min_val; }
 esp_err_t kaleidobox_nvs_set_bright_min(uint8_t min) {
   SCALAR_SETTER(nvs_set_u8, NVS_ID_BRIGHT_MIN, bright_min_val, min)
+}
+
+bool kaleidobox_nvs_get_message_enabled(void) { return msg_enabled_val != 0; }
+esp_err_t kaleidobox_nvs_set_message_enabled(bool enable) {
+  uint8_t v = enable ? 1 : 0;
+  SCALAR_SETTER(nvs_set_u8, NVS_ID_MSG_ENABLED, msg_enabled_val, v)
+}
+
+bool kaleidobox_nvs_get_message_static(void) { return msg_static_val != 0; }
+esp_err_t kaleidobox_nvs_set_message_static(bool enable) {
+  uint8_t v = enable ? 1 : 0;
+  SCALAR_SETTER(nvs_set_u8, NVS_ID_MSG_STATIC, msg_static_val, v)
+}
+
+const char *kaleidobox_nvs_get_message_text(void) { return msg_text_val; }
+esp_err_t kaleidobox_nvs_set_message_text(const char *text) {
+  STRING_SETTER(NVS_ID_MSG_TEXT, msg_text_val, text)
+}
+
+uint32_t kaleidobox_nvs_get_message_color(void) { return msg_color_val; }
+esp_err_t kaleidobox_nvs_set_message_color(uint32_t color) {
+  SCALAR_SETTER(nvs_set_u32, NVS_ID_MSG_COLOR, msg_color_val, color)
+}
+
+uint16_t kaleidobox_nvs_get_message_secs(void) { return msg_secs_val; }
+esp_err_t kaleidobox_nvs_set_message_secs(uint16_t seconds) {
+  SCALAR_SETTER(nvs_set_u16, NVS_ID_MSG_SECS, msg_secs_val, seconds)
 }

@@ -153,6 +153,19 @@
     <button type="button" class="danger" id="clear" style="margin-left:auto;">CLEAR/STOP</button>
   </div>
 </div>
+
+<div class="section">
+  <h2>Message</h2>
+  <p class="sub">Shows a custom message - either taking its turn in the display rotation, or pinned on screen (overrides everything else until turned off).</p>
+  <div class="controls">
+    <label><input type="checkbox" id="msgEnabled"> Enabled</label>
+    <label><input type="checkbox" id="msgStatic"> Static</label>
+    <label>Color <input type="color" id="msgColor" value="#ffffff"></label>
+  </div>
+  <div class="controls">
+    <input type="text" id="msgText" placeholder="Message to display" style="flex:1;">
+  </div>
+</div>
 </div>
 
 <div class="col-side">
@@ -391,6 +404,35 @@
       });
   }
   refreshCanvasPreview().catch(function () {});
+
+  var msgEnabled = document.getElementById('msgEnabled');
+  var msgStatic = document.getElementById('msgStatic');
+  var msgColor = document.getElementById('msgColor');
+  var msgText = document.getElementById('msgText');
+
+  function sendMessageSettings() {
+    return fetch('/api/message', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        enabled: msgEnabled.checked,
+        static: msgStatic.checked,
+        color: msgColor.value,
+        text: msgText.value,
+      }),
+    });
+  }
+  [msgEnabled, msgStatic, msgColor].forEach(function (el) {
+    el.addEventListener('change', function () { sendMessageSettings().catch(function () {}); });
+  });
+  msgText.addEventListener('change', function () { sendMessageSettings().catch(function () {}); });
+
+  fetch('/api/message').then(function (r) { return r.json(); }).then(function (s) {
+    msgEnabled.checked = s.enabled;
+    msgStatic.checked = s.static;
+    msgColor.value = s.color;
+    msgText.value = s.text;
+  }).catch(function () {});
 
   var kaleidoToggle = document.getElementById('kaleidoToggle');
   var foldCount = document.getElementById('foldCount');

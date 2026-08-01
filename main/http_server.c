@@ -3,6 +3,7 @@
 #include "canvas.h"
 #include "cJSON.h"
 #include "clock.h"
+#include "display_rotation.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_netif.h"
@@ -907,16 +908,81 @@ static esp_err_t weather_post_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
+// --- Message (custom text takeover, plain or static) ------------------------
+
+static esp_err_t message_get_handler(httpd_req_t *req) {
+  cJSON *root = cJSON_CreateObject();
+  cJSON_AddBoolToObject(root, "enabled", kaleidobox_nvs_get_message_enabled());
+  cJSON_AddBoolToObject(root, "static", kaleidobox_nvs_get_message_static());
+  cJSON_AddStringToObject(root, "text", kaleidobox_nvs_get_message_text());
+  char color_str[8];
+  snprintf(color_str, sizeof(color_str), "#%06lx",
+          (unsigned long)kaleidobox_nvs_get_message_color());
+  cJSON_AddStringToObject(root, "color", color_str);
+
+  char *json = cJSON_PrintUnformatted(root);
+  httpd_resp_set_type(req, "application/json");
+  esp_err_t res = httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
+  free(json);
+  cJSON_Delete(root);
+  return res;
+}
+
+static esp_err_t message_post_handler(httpd_req_t *req) {
+  char *body = NULL;
+  if (read_body(req, &body) != ESP_OK) {
+    httpd_resp_send_500(req);
+    return ESP_FAIL;
+  }
+  cJSON *json = cJSON_Parse(body);
+  free(body);
+  if (!json) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_sendstr(req, "Invalid JSON");
+    return ESP_FAIL;
+  }
+
+  cJSON *item = cJSON_GetObjectItem(json, "enabled");
+  if (cJSON_IsBool(item)) {
+    kaleidobox_nvs_set_message_enabled(cJSON_IsTrue(item));
+  }
+  item = cJSON_GetObjectItem(json, "static");
+  if (cJSON_IsBool(item)) {
+    kaleidobox_nvs_set_message_static(cJSON_IsTrue(item));
+  }
+  item = cJSON_GetObjectItem(json, "text");
+  if (cJSON_IsString(item)) {
+    kaleidobox_nvs_set_message_text(item->valuestring);
+  }
+  item = cJSON_GetObjectItem(json, "color");
+  if (cJSON_IsString(item) && item->valuestring[0] == '#' &&
+      strlen(item->valuestring) == 7) {
+    kaleidobox_nvs_set_message_color(
+        (uint32_t)strtoul(item->valuestring + 1, NULL, 16));
+  }
+  cJSON_Delete(json);
+
+  // Applied live if the message is currently the active static display -
+  // same "settings change takes effect immediately" reasoning every
+  // other live-applied setting on this page already follows.
+  kaleidobox_display_rotation_message_changed();
+
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_sendstr(req, "{\"ok\":true}");
+  return ESP_OK;
+}
+
 // --- Display rotation --------------------------------------------------------
-// See main/display_rotation.c - clock/printer/weather each get their own
-// independent dwell time, so this lives in its own small endpoint rather
-// than under any one of those three feature endpoints.
+// See main/display_rotation.c - clock/printer/weather/message each get
+// their own independent dwell time, so this lives in its own small
+// endpoint rather than under any one of those feature endpoints.
 
 static esp_err_t rotation_get_handler(httpd_req_t *req) {
   cJSON *root = cJSON_CreateObject();
   cJSON_AddNumberToObject(root, "clock_secs", kaleidobox_nvs_get_clock_secs());
   cJSON_AddNumberToObject(root, "printer_secs", kaleidobox_nvs_get_printer_secs());
   cJSON_AddNumberToObject(root, "weather_secs", kaleidobox_nvs_get_weather_secs());
+  cJSON_AddNumberToObject(root, "message_secs", kaleidobox_nvs_get_message_secs());
 
   char *json = cJSON_PrintUnformatted(root);
   httpd_resp_set_type(req, "application/json");
@@ -951,6 +1017,10 @@ static esp_err_t rotation_post_handler(httpd_req_t *req) {
   item = cJSON_GetObjectItem(json, "weather_secs");
   if (cJSON_IsNumber(item) && item->valueint >= 0 && item->valueint <= 300) {
     kaleidobox_nvs_set_weather_secs((uint16_t)item->valueint);
+  }
+  item = cJSON_GetObjectItem(json, "message_secs");
+  if (cJSON_IsNumber(item) && item->valueint >= 0 && item->valueint <= 300) {
+    kaleidobox_nvs_set_message_secs((uint16_t)item->valueint);
   }
   cJSON_Delete(json);
 
@@ -1365,10 +1435,10 @@ esp_err_t kaleidobox_http_server_start(void) {
   // Default max_uri_handlers is 8 - we register more than that (root,
   // settings page, logo, icon, status, logs, wifi, ota, ws/draw, canvas
   // get/submit, kaleidoscope x2, clock x2, brightness x2, gallery x10,
-  // printspy x2, weather x2, rotation x2). Past the cap,
+  // printspy x2, weather x2, message x2, rotation x2). Past the cap,
   // httpd_register_uri_handler silently drops the excess - printspy-cam
   // hit this exact bug once already (see its http_server.c comment).
-  config.max_uri_handlers = 33;
+  config.max_uri_handlers = 35;
   // 1 for the log worker + 12 other concurrent connections. Confirmed
   // live: the old value (7 total, 6 available) had zero headroom over a
   // single browser tab's own per-origin connection limit - a couple of
@@ -1443,6 +1513,11 @@ esp_err_t kaleidobox_http_server_start(void) {
   httpd_uri_t weather_post_uri = {.uri = "/api/weather",
                                   .method = HTTP_POST,
                                   .handler = weather_post_handler};
+  httpd_uri_t message_get_uri = {
+      .uri = "/api/message", .method = HTTP_GET, .handler = message_get_handler};
+  httpd_uri_t message_post_uri = {.uri = "/api/message",
+                                  .method = HTTP_POST,
+                                  .handler = message_post_handler};
   httpd_uri_t rotation_get_uri = {
       .uri = "/api/rotation", .method = HTTP_GET, .handler = rotation_get_handler};
   httpd_uri_t rotation_post_uri = {.uri = "/api/rotation",
@@ -1503,6 +1578,8 @@ esp_err_t kaleidobox_http_server_start(void) {
   httpd_register_uri_handler(server, &printspy_post_uri);
   httpd_register_uri_handler(server, &weather_get_uri);
   httpd_register_uri_handler(server, &weather_post_uri);
+  httpd_register_uri_handler(server, &message_get_uri);
+  httpd_register_uri_handler(server, &message_post_uri);
   httpd_register_uri_handler(server, &rotation_get_uri);
   httpd_register_uri_handler(server, &rotation_post_uri);
   httpd_register_uri_handler(server, &brightness_get_uri);

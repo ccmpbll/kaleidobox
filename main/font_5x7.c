@@ -3,6 +3,7 @@
 #include "matrix.h"
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 // 5x7 bitmap font, ASCII 0x20 (space) - 0x7E ('~'), vendored from
@@ -300,6 +301,94 @@ bool kaleidobox_font_draw_text_fit(int y, const char *text, uint8_t r,
   }
   draw_line((64 - width) / 2, y, text, NULL, r, g, b, 1, NULL, 0, 0, 0, 0);
   return true;
+}
+
+#define WRAP_MAX_LINES 8
+#define WRAP_LINE_STEP 9 // 7px glyph + 2px gap - same step render_weather() uses
+
+// Greedy word-wrap: builds each line by adding words (space-separated)
+// until the next one wouldn't fit at scale 1, then starts a new line. A
+// single word wider than 64px on its own still gets its own line - it
+// clips at the panel edge (draw_line/plot already silently clip),
+// there's no smaller unit than a word to break it into. Lines beyond
+// WRAP_MAX_LINES are dropped (message.c's caller is expected to keep
+// user messages short; this is just a hard backstop, not a real UI).
+void kaleidobox_font_draw_text_wrapped(const char *text, uint8_t r, uint8_t g,
+                                       uint8_t b) {
+  char lines[WRAP_MAX_LINES][64];
+  int n_lines = 0;
+  char cur[64] = "";
+
+  const char *p = text;
+  while (*p && n_lines < WRAP_MAX_LINES) {
+    while (*p == ' ') {
+      p++;
+    }
+    const char *word_start = p;
+    while (*p && *p != ' ') {
+      p++;
+    }
+    size_t word_len = (size_t)(p - word_start);
+    if (word_len == 0) {
+      break; // trailing spaces only - done
+    }
+    if (word_len >= sizeof(cur)) {
+      word_len = sizeof(cur) - 1; // one absurdly long "word" - truncate rather than overflow
+    }
+    char word[64];
+    memcpy(word, word_start, word_len);
+    word[word_len] = '\0';
+
+    // Built with strncpy/strncat (bounds-checked but not printf-family)
+    // rather than a two-source snprintf("%s %.*s", ...) - gcc's
+    // -Wformat-truncation can't prove that combination fits cur's
+    // declared 64 bytes even though word_len is already clamped above,
+    // and treats the possible truncation as a build error here.
+    char candidate[64];
+    strncpy(candidate, cur, sizeof(candidate) - 1);
+    candidate[sizeof(candidate) - 1] = '\0';
+    if (cur[0]) {
+      strncat(candidate, " ", sizeof(candidate) - strlen(candidate) - 1);
+    }
+    strncat(candidate, word, sizeof(candidate) - strlen(candidate) - 1);
+
+    if (cur[0] && measure_line(candidate, 1) > 64) {
+      // Doesn't fit alongside what's already on this line - flush the
+      // line as-is and start a new one with just this word.
+      strncpy(lines[n_lines], cur, sizeof(lines[0]) - 1);
+      lines[n_lines][sizeof(lines[0]) - 1] = '\0';
+      n_lines++;
+      strncpy(cur, word, sizeof(cur) - 1);
+      cur[sizeof(cur) - 1] = '\0';
+    } else {
+      strncpy(cur, candidate, sizeof(cur) - 1);
+      cur[sizeof(cur) - 1] = '\0';
+    }
+  }
+  if (cur[0] && n_lines < WRAP_MAX_LINES) {
+    strncpy(lines[n_lines], cur, sizeof(lines[0]) - 1);
+    lines[n_lines][sizeof(lines[0]) - 1] = '\0';
+    n_lines++;
+  }
+  if (n_lines == 0) {
+    return;
+  }
+
+  int max_fit = 64 / WRAP_LINE_STEP;
+  if (n_lines > max_fit) {
+    n_lines = max_fit; // drop trailing lines that don't fit the panel
+  }
+
+  int block_h = n_lines * WRAP_LINE_STEP;
+  int y = (64 - block_h) / 2;
+  if (y < 0) {
+    y = 0;
+  }
+  for (int i = 0; i < n_lines; i++) {
+    int width = measure_line(lines[i], 1);
+    draw_line((64 - width) / 2, y + i * WRAP_LINE_STEP, lines[i], NULL, r, g, b,
+              1, NULL, 0, 0, 0, 0);
+  }
 }
 
 // Paints glyph pixels straight onto a caller-owned buffer, nothing

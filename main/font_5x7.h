@@ -26,6 +26,14 @@ void kaleidobox_font_draw_text_centered(int y, const char *text, uint8_t r,
 bool kaleidobox_font_draw_text_fit(int y, const char *text, uint8_t r,
                                    uint8_t g, uint8_t b);
 
+// Greedy word-wraps text across multiple centered lines (space-
+// separated words, breaking to a new line whenever the next word
+// wouldn't fit at scale 1) and vertically centers the resulting block
+// on the 64px panel. Lines/words too long to ever fit still render,
+// clipped at the panel edge, same as every other draw call here.
+void kaleidobox_font_draw_text_wrapped(const char *text, uint8_t r, uint8_t g,
+                                       uint8_t b);
+
 // Draws one centered line onto a caller-owned
 // CANVAS_WIDTH*CANVAS_HEIGHT*3 RGB888 buffer instead of the live matrix
 // - used to overlay text onto a frame before it's pushed (e.g. the

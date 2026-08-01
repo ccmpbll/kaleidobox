@@ -2,8 +2,10 @@
 
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "font_5x7.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "matrix.h"
 #include "panel_takeover.h"
 #include "printspy.h"
 #include "settings.h"
@@ -13,11 +15,30 @@ static const char *TAG = "display_rotation";
 
 #define TICK_MS 1000
 
-typedef enum { SLOT_CLOCK, SLOT_PRINTER, SLOT_WEATHER } slot_kind_t;
+typedef enum { SLOT_CLOCK, SLOT_PRINTER, SLOT_WEATHER, SLOT_MESSAGE } slot_kind_t;
 
 static slot_kind_t g_slot = SLOT_CLOCK;
 static int g_printer_idx = 0;
 static int64_t g_slot_start_us = 0;
+// Tracks whether the message is currently showing as the exclusive
+// static override (see enter_static_message()/rotation_task() below) -
+// separate from g_slot, since static mode bypasses the normal slot
+// machine entirely rather than being one more slot within it.
+static bool g_static_message_active = false;
+
+static void render_message(void) {
+  uint32_t color = kaleidobox_nvs_get_message_color();
+  kaleidobox_matrix_clear();
+  kaleidobox_font_draw_text_wrapped(kaleidobox_nvs_get_message_text(),
+                                    (uint8_t)(color >> 16), (uint8_t)(color >> 8),
+                                    (uint8_t)color);
+}
+
+void kaleidobox_display_rotation_message_changed(void) {
+  if (g_static_message_active) {
+    render_message();
+  }
+}
 
 static void enter_clock(void) {
   if (kaleidobox_panel_takeover_active()) {
@@ -59,20 +80,41 @@ static bool enter_weather(void) {
   return true;
 }
 
+// Rotation-participant entry - only when message_static is off (static
+// mode is handled entirely separately, see rotation_task() below).
+// Unlike weather/printer there's nothing to fetch; just checks there's
+// actually a message to show before taking over the panel.
+static bool enter_message(void) {
+  if (!kaleidobox_nvs_get_message_text()[0]) {
+    return false;
+  }
+  if (!kaleidobox_panel_takeover_active() && !kaleidobox_panel_takeover_begin()) {
+    return false; // recent draw activity, or lost the race - try again next tick
+  }
+  render_message();
+  g_slot = SLOT_MESSAGE;
+  g_slot_start_us = esp_timer_get_time();
+  return true;
+}
+
 // Moves from the current slot to whatever comes next, skipping
 // anything not currently applicable. Order is always clock -> each
-// printing printer, in turn -> weather -> clock ... - every lap starts
-// and ends at clock, so panel_takeover only ever begins on the way out
-// of clock and ends on the way back into it.
+// printing printer, in turn -> weather -> message -> clock ... - every
+// lap starts and ends at clock, so panel_takeover only ever begins on
+// the way out of clock and ends on the way back into it.
 static void advance(void) {
   int printer_count = kaleidobox_printspy_printing_count();
   bool weather_on = kaleidobox_nvs_get_weather_enabled();
+  bool message_on = kaleidobox_nvs_get_message_enabled();
 
   if (g_slot == SLOT_CLOCK) {
     if (printer_count > 0 && enter_printer(0)) {
       return;
     }
     if (weather_on && enter_weather()) {
+      return;
+    }
+    if (message_on && enter_message()) {
       return;
     }
     // Nothing applicable - stay on clock, but reset the timer so this
@@ -89,11 +131,22 @@ static void advance(void) {
     if (weather_on && enter_weather()) {
       return;
     }
+    if (message_on && enter_message()) {
+      return;
+    }
     enter_clock();
     return;
   }
 
-  // SLOT_WEATHER
+  if (g_slot == SLOT_WEATHER) {
+    if (message_on && enter_message()) {
+      return;
+    }
+    enter_clock();
+    return;
+  }
+
+  // SLOT_MESSAGE
   enter_clock();
 }
 
@@ -107,8 +160,10 @@ static uint16_t current_slot_secs(void) {
   case SLOT_PRINTER:
     return kaleidobox_nvs_get_printer_secs();
   case SLOT_WEATHER:
-  default:
     return kaleidobox_nvs_get_weather_secs();
+  case SLOT_MESSAGE:
+  default:
+    return kaleidobox_nvs_get_message_secs();
   }
 }
 
@@ -118,6 +173,33 @@ static void rotation_task(void *arg) {
   g_slot_start_us = esp_timer_get_time();
   while (1) {
     vTaskDelay(pdMS_TO_TICKS(TICK_MS));
+
+    // Static message mode fully overrides the normal slot machine
+    // rather than being one more slot within it - checked first, every
+    // tick, ahead of the regular clock/printer/weather/message cycle
+    // below. Reuses panel_takeover.h for the same draw-activity guard
+    // and kaleidoscope stop/restore every other takeover already gets,
+    // just held indefinitely instead of for a fixed dwell time.
+    bool want_static = kaleidobox_nvs_get_message_static() &&
+                       kaleidobox_nvs_get_message_text()[0];
+    if (want_static) {
+      if (!g_static_message_active) {
+        if (kaleidobox_panel_takeover_active() ||
+            kaleidobox_panel_takeover_begin()) {
+          render_message();
+          g_static_message_active = true;
+        }
+        // else: recent draw activity, or lost the race - try again next tick
+      }
+      continue;
+    }
+    if (g_static_message_active) {
+      // Static mode just turned off - enter_clock() ends the takeover
+      // this same static mode began and restores whatever was showing.
+      g_static_message_active = false;
+      enter_clock();
+      continue;
+    }
 
     uint16_t secs = current_slot_secs();
     if (secs == 0) {

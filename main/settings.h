@@ -112,20 +112,37 @@ esp_err_t kaleidobox_nvs_set_weather_units(uint8_t units);
 uint16_t kaleidobox_nvs_get_weather_fields(void);
 esp_err_t kaleidobox_nvs_set_weather_fields(uint16_t fields);
 
+// Message takeover - see main/display_rotation.c. enabled + non-empty
+// text means the message takes its turn in the normal rotation cycle
+// (like weather); "static" means it fully overrides the rotation
+// instead - no clock/printer/weather/kaleidoscope, just the message,
+// until turned off. color is 0xRRGGBB, same packing as clock_color.
+bool kaleidobox_nvs_get_message_enabled(void);
+esp_err_t kaleidobox_nvs_set_message_enabled(bool enable);
+bool kaleidobox_nvs_get_message_static(void);
+esp_err_t kaleidobox_nvs_set_message_static(bool enable);
+const char *kaleidobox_nvs_get_message_text(void);
+esp_err_t kaleidobox_nvs_set_message_text(const char *text);
+uint32_t kaleidobox_nvs_get_message_color(void);
+esp_err_t kaleidobox_nvs_set_message_color(uint32_t color);
+
 // Display rotation - see main/display_rotation.c. The panel cycles
 // clock (kaleidoscope/idle) -> each currently-printing printer, in
-// turn -> weather (if enabled) -> clock ..., skipping any slot that
-// doesn't currently apply (e.g. no printer printing, or weather
-// disabled). Each slot has its own independent dwell time - 0 means
-// "stay in this slot indefinitely" (only meaningful for clock; a
-// printer/weather slot with 0 just never advances past it once
-// entered, which for weather means never returning to clock).
+// turn -> weather (if enabled) -> message (if enabled) -> clock ...,
+// skipping any slot that doesn't currently apply (e.g. no printer
+// printing, or weather disabled). Each slot has its own independent
+// dwell time - 0 means "stay in this slot indefinitely" (only
+// meaningful for clock; a printer/weather/message slot with 0 just
+// never advances past it once entered, which for the last slot in the
+// cycle means never returning to clock).
 uint16_t kaleidobox_nvs_get_clock_secs(void);
 esp_err_t kaleidobox_nvs_set_clock_secs(uint16_t seconds);
 uint16_t kaleidobox_nvs_get_printer_secs(void);
 esp_err_t kaleidobox_nvs_set_printer_secs(uint16_t seconds);
 uint16_t kaleidobox_nvs_get_weather_secs(void);
 esp_err_t kaleidobox_nvs_set_weather_secs(uint16_t seconds);
+uint16_t kaleidobox_nvs_get_message_secs(void);
+esp_err_t kaleidobox_nvs_set_message_secs(uint16_t seconds);
 
 // Brightness schedule - see main/brightness_schedule.h. While enabled,
 // brightness is set to dim_brightness at dim_hour:dim_min and restored

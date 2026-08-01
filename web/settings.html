@@ -170,11 +170,12 @@
 
 <div class="section">
   <h2>Display Rotation</h2>
-  <p class="sub">The panel cycles clock &rarr; any printer currently printing &rarr; weather (if enabled) &rarr; clock again. Each gets its own duration (0 = stay indefinitely).</p>
+  <p class="sub">The panel cycles clock &rarr; any printer currently printing &rarr; weather (if enabled) &rarr; message (if enabled) &rarr; clock again. Each gets its own duration (0 = stay indefinitely).</p>
   <div class="controls">
     <label>Clock <input type="number" id="clockSecs" min="0" max="300" style="width:60px;"> sec</label>
     <label>Printer <input type="number" id="printerSecs" min="0" max="300" style="width:60px;"> sec</label>
     <label>Weather <input type="number" id="weatherSecs" min="0" max="300" style="width:60px;"> sec</label>
+    <label>Message <input type="number" id="messageSecs" min="0" max="300" style="width:60px;"> sec</label>
   </div>
   <p id="rotationResult" class="result"></p>
 </div>
@@ -509,15 +510,17 @@
   var clockSecs = document.getElementById('clockSecs');
   var printerSecs = document.getElementById('printerSecs');
   var weatherSecs = document.getElementById('weatherSecs');
+  var messageSecs = document.getElementById('messageSecs');
   var rotationResult = document.getElementById('rotationResult');
 
   fetch('/api/rotation').then(function (r) { return r.json(); }).then(function (s) {
     clockSecs.value = s.clock_secs;
     printerSecs.value = s.printer_secs;
     weatherSecs.value = s.weather_secs;
+    messageSecs.value = s.message_secs;
   }).catch(function () {});
 
-  [clockSecs, printerSecs, weatherSecs].forEach(function (el) {
+  [clockSecs, printerSecs, weatherSecs, messageSecs].forEach(function (el) {
     el.addEventListener('change', function () {
       rotationResult.textContent = 'Saving…';
       fetch('/api/rotation', {
@@ -526,6 +529,7 @@
           clock_secs: parseInt(clockSecs.value, 10),
           printer_secs: parseInt(printerSecs.value, 10),
           weather_secs: parseInt(weatherSecs.value, 10),
+          message_secs: parseInt(messageSecs.value, 10),
         }),
       }).then(function (r) {
         rotationResult.textContent = r.ok ? 'Saved.' : 'Save failed.';
