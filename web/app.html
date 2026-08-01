@@ -164,6 +164,7 @@
   </div>
   <div class="controls">
     <input type="text" id="msgText" placeholder="Message to display" style="flex:1;">
+    <button type="button" id="msgSend">Send</button>
   </div>
 </div>
 </div>
@@ -409,6 +410,7 @@
   var msgStatic = document.getElementById('msgStatic');
   var msgColor = document.getElementById('msgColor');
   var msgText = document.getElementById('msgText');
+  var msgSend = document.getElementById('msgSend');
 
   function sendMessageSettings() {
     return fetch('/api/message', {
@@ -422,10 +424,23 @@
       }),
     });
   }
+  // enabled/static/color apply immediately like every other toggle/picker
+  // on this page - the text field is the one that benefits from an
+  // explicit action instead of a blur-triggered save, especially on
+  // mobile where dismissing the keyboard is its own fiddly step.
   [msgEnabled, msgStatic, msgColor].forEach(function (el) {
     el.addEventListener('change', function () { sendMessageSettings().catch(function () {}); });
   });
-  msgText.addEventListener('change', function () { sendMessageSettings().catch(function () {}); });
+  msgSend.addEventListener('click', function () {
+    msgSend.disabled = true;
+    var original = msgSend.textContent;
+    sendMessageSettings()
+      .then(function (r) { msgSend.textContent = r.ok ? 'Sent' : 'Failed'; })
+      .catch(function () { msgSend.textContent = 'Failed'; })
+      .finally(function () {
+        setTimeout(function () { msgSend.textContent = original; msgSend.disabled = false; }, 1200);
+      });
+  });
 
   fetch('/api/message').then(function (r) { return r.json(); }).then(function (s) {
     msgEnabled.checked = s.enabled;
