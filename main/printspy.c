@@ -25,6 +25,7 @@ typedef struct {
   bool used;
   int64_t id;
   char name[32];
+  char file_name[40]; // job.file_name - empty if not printing/not sent
   bool printing; // state == "printing"
   float progress; // 0-100
   int remaining_secs;
@@ -98,9 +99,10 @@ static void handle_message(const char *data, int len) {
   cJSON *state = cJSON_GetObjectItem(json, "state");
   bool printing = cJSON_IsString(state) && strcmp(state->valuestring, "printing") == 0;
 
-  bool have_progress = false, have_remaining = false;
+  bool have_progress = false, have_remaining = false, have_file_name = false;
   float progress = 0;
   int remaining_secs = 0;
+  char file_name[40] = "";
   cJSON *job = cJSON_GetObjectItem(json, "job");
   if (cJSON_IsObject(job)) {
     cJSON *progress_item = cJSON_GetObjectItem(job, "progress");
@@ -112,6 +114,11 @@ static void handle_message(const char *data, int len) {
     if (cJSON_IsNumber(remaining_item)) {
       remaining_secs = remaining_item->valueint;
       have_remaining = true;
+    }
+    cJSON *file_name_item = cJSON_GetObjectItem(job, "file_name");
+    if (cJSON_IsString(file_name_item)) {
+      strncpy(file_name, file_name_item->valuestring, sizeof(file_name) - 1);
+      have_file_name = true;
     }
   }
   cJSON_Delete(json);
@@ -135,6 +142,10 @@ static void handle_message(const char *data, int len) {
     }
     if (have_remaining) {
       entry->remaining_secs = remaining_secs;
+    }
+    if (have_file_name) {
+      strncpy(entry->file_name, file_name, sizeof(entry->file_name) - 1);
+      entry->file_name[sizeof(entry->file_name) - 1] = '\0';
     }
     entry->last_seen_us = esp_timer_get_time();
   }
@@ -287,20 +298,50 @@ static void draw_progress_bar(int x0, int y0, int w, int h, float frac) {
   }
 }
 
+// Real gcode/print job file names routinely run 20-40+ characters
+// (slicer-generated names, often with settings baked in - e.g.
+// "benchy_0.2mm_PLA_MK4S.gcode") - essentially never fit this 64px
+// panel at any legible size. Tries the full name first (short names do
+// fit), then trims from the end with a trailing "..." until something
+// fits, so there's always at least a recognizable prefix rather than
+// either an overflowing mess or nothing at all. No-op (draws nothing)
+// if name is empty.
+static void draw_filename_fit(int y, const char *name) {
+  if (!name[0]) {
+    return;
+  }
+  if (kaleidobox_font_draw_text_fit(y, name, 170, 170, 180)) {
+    return;
+  }
+  char buf[40];
+  strncpy(buf, name, sizeof(buf) - 1);
+  buf[sizeof(buf) - 1] = '\0';
+  for (size_t len = strlen(buf); len > 0; len--) {
+    buf[len - 1] = '\0';
+    char candidate[44];
+    snprintf(candidate, sizeof(candidate), "%s...", buf);
+    if (kaleidobox_font_draw_text_fit(y, candidate, 170, 170, 180)) {
+      return;
+    }
+  }
+}
+
 static void render_printer(const printer_entry_t *p) {
   kaleidobox_matrix_clear();
   if (!kaleidobox_font_draw_text_fit(2, p->name, 255, 255, 255)) {
     kaleidobox_font_draw_text_centered(2, "Printing", 255, 255, 255);
   }
+  draw_filename_fit(12, p->file_name);
   draw_progress_bar(4, 24, 56, 10, p->progress / 100.0f);
 
-  char pct[8];
-  snprintf(pct, sizeof(pct), "%d%%", (int)p->progress);
-  kaleidobox_font_draw_text_centered(40, pct, 200, 200, 200);
-
+  // Percent + time remaining on one combined line, not two stacked
+  // ones - frees up a second line's worth of vertical space (used
+  // above for the file name instead) without losing either value.
   char remaining[16];
   format_remaining(p->remaining_secs, remaining, sizeof(remaining));
-  kaleidobox_font_draw_text_centered(50, remaining, 150, 150, 150);
+  char line[24];
+  snprintf(line, sizeof(line), "%d%% - %s", (int)p->progress, remaining);
+  kaleidobox_font_draw_text_centered(42, line, 200, 200, 200);
 }
 
 // Shared by printing_count() and render_printing() below so the
