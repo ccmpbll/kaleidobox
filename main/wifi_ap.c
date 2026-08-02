@@ -362,3 +362,5 @@ void kaleidobox_wifi_ap_start(bool is_fallback) {
   };
   httpd_register_uri_handler(http_server, &connect_get_uri);
 }
+
+const char *kaleidobox_wifi_ap_get_ssid(void) { return ap_ssid; }

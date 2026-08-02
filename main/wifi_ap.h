@@ -9,3 +9,8 @@
 // reboots.
 
 void kaleidobox_wifi_ap_start(bool is_fallback);
+
+// The SSID kaleidobox_wifi_ap_start() actually configured ("kaleidobox-
+// setup-XXXX", last 4 hex chars of the MAC) - empty string if AP mode
+// hasn't been started yet.
+const char *kaleidobox_wifi_ap_get_ssid(void);

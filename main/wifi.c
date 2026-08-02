@@ -143,7 +143,8 @@ static void start_wifi_connecting_anim(void) {
 
 // Must be called (and must finish) before anything else draws to the
 // matrix - see the block comment above. A no-op if the animation was
-// never started (e.g. AP mode never runs it).
+// never started (the fresh-setup, no-saved-credentials path skips
+// starting this animation at all, going straight to AP mode instead).
 static void stop_wifi_connecting_anim(void) {
   if (!wifi_anim_task) {
     return;
@@ -323,6 +324,26 @@ bool kaleidobox_wifi_has_credentials(void) {
   return cfg.sta.ssid[0] != '\0';
 }
 
+// AP mode used to leave whatever the connecting animation's last frame
+// happened to be frozen on the matrix forever (stop_wifi_connecting_anim()
+// only stops the task, it doesn't clear/replace anything - confirmed
+// live: a fresh board stuck showing "Connecting" throughout its entire
+// setup-mode window, looking hung even though AP mode and the setup
+// page were both actually up and working). SSID's own fixed
+// "kaleidobox-setup-" prefix is dropped from the display, not because
+// it's wrong to show, but because the full 21-character string doesn't
+// fit this panel at any legible size - the panel itself already says
+// what device this is, and the phone's own WiFi picker shows the real
+// full SSID regardless; this just needs enough to recognize/match it.
+static void show_ap_setup_on_matrix(const char *ssid) {
+  kaleidobox_matrix_clear();
+  kaleidobox_font_draw_text_centered(4, "Setup", 0, 200, 255);
+  kaleidobox_font_draw_text_centered(14, "Mode", 0, 200, 255);
+  kaleidobox_font_draw_text_centered(34, "Join WiFi:", 200, 200, 200);
+  const char *suffix = strstr(ssid, "setup-");
+  kaleidobox_font_draw_text_centered(44, suffix ? suffix : ssid, 255, 255, 255);
+}
+
 static void enter_ap_mode(bool is_fallback) {
   ESP_LOGI(TAG, "Entering AP provisioning mode (fallback=%d)", is_fallback);
   EventBits_t bits = WIFI_AP_MODE_ACTIVE_EVENT;
@@ -331,6 +352,7 @@ static void enter_ap_mode(bool is_fallback) {
   }
   xEventGroupSetBits(wifi_event_group_handle, bits);
   kaleidobox_wifi_ap_start(is_fallback);
+  show_ap_setup_on_matrix(kaleidobox_wifi_ap_get_ssid());
   // Block here - AP mode only ends via reboot (triggered inside the setup
   // page's POST handler), so this task effectively sleeps until restart.
   while (1) {
@@ -375,7 +397,7 @@ void wifi_task_run(void *pvParameters) {
           xSemaphoreGive(wifi_req_semaphore);
           ESP_LOGW(TAG, "Exhausted %d boot retries, entering AP mode",
                    WIFI_MAX_BOOT_RETRIES);
-          stop_wifi_connecting_anim(); // AP mode doesn't use the matrix at all yet
+          stop_wifi_connecting_anim(); // must finish before show_ap_setup_on_matrix draws
           enter_ap_mode(true);
           return; // unreachable
         }
