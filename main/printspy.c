@@ -11,6 +11,7 @@
 #include "settings.h"
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 static const char *TAG = "printspy";
 
@@ -25,7 +26,6 @@ typedef struct {
   bool used;
   int64_t id;
   char name[32];
-  char file_name[40]; // job.file_name - empty if not printing/not sent
   bool printing; // state == "printing"
   float progress; // 0-100
   int remaining_secs;
@@ -99,10 +99,9 @@ static void handle_message(const char *data, int len) {
   cJSON *state = cJSON_GetObjectItem(json, "state");
   bool printing = cJSON_IsString(state) && strcmp(state->valuestring, "printing") == 0;
 
-  bool have_progress = false, have_remaining = false, have_file_name = false;
+  bool have_progress = false, have_remaining = false;
   float progress = 0;
   int remaining_secs = 0;
-  char file_name[40] = "";
   cJSON *job = cJSON_GetObjectItem(json, "job");
   if (cJSON_IsObject(job)) {
     cJSON *progress_item = cJSON_GetObjectItem(job, "progress");
@@ -114,11 +113,6 @@ static void handle_message(const char *data, int len) {
     if (cJSON_IsNumber(remaining_item)) {
       remaining_secs = remaining_item->valueint;
       have_remaining = true;
-    }
-    cJSON *file_name_item = cJSON_GetObjectItem(job, "file_name");
-    if (cJSON_IsString(file_name_item)) {
-      strncpy(file_name, file_name_item->valuestring, sizeof(file_name) - 1);
-      have_file_name = true;
     }
   }
   cJSON_Delete(json);
@@ -142,10 +136,6 @@ static void handle_message(const char *data, int len) {
     }
     if (have_remaining) {
       entry->remaining_secs = remaining_secs;
-    }
-    if (have_file_name) {
-      strncpy(entry->file_name, file_name, sizeof(entry->file_name) - 1);
-      entry->file_name[sizeof(entry->file_name) - 1] = '\0';
     }
     entry->last_seen_us = esp_timer_get_time();
   }
@@ -288,9 +278,9 @@ static void draw_progress_bar(int x0, int y0, int w, int h, float frac) {
       bool border = (x == x0 || x == x0 + w - 1 || y == y0 || y == y0 + h - 1);
       bool filled = x < x0 + fill_w;
       if (border) {
-        kaleidobox_matrix_set_pixel((uint8_t)x, (uint8_t)y, 120, 120, 120);
+        kaleidobox_matrix_set_pixel((uint8_t)x, (uint8_t)y, 255, 255, 255);
       } else if (filled) {
-        kaleidobox_matrix_set_pixel((uint8_t)x, (uint8_t)y, 0, 220, 90);
+        kaleidobox_matrix_set_pixel((uint8_t)x, (uint8_t)y, 0, 255, 0);
       } else {
         kaleidobox_matrix_set_pixel((uint8_t)x, (uint8_t)y, 0, 0, 0);
       }
@@ -298,50 +288,60 @@ static void draw_progress_bar(int x0, int y0, int w, int h, float frac) {
   }
 }
 
-// Real gcode/print job file names routinely run 20-40+ characters
-// (slicer-generated names, often with settings baked in - e.g.
-// "benchy_0.2mm_PLA_MK4S.gcode") - essentially never fit this 64px
-// panel at any legible size. Tries the full name first (short names do
-// fit), then trims from the end with a trailing "..." until something
-// fits, so there's always at least a recognizable prefix rather than
-// either an overflowing mess or nothing at all. No-op (draws nothing)
-// if name is empty.
-static void draw_filename_fit(int y, const char *name) {
-  if (!name[0]) {
-    return;
-  }
-  if (kaleidobox_font_draw_text_fit(y, name, 170, 170, 180)) {
-    return;
-  }
-  char buf[40];
-  strncpy(buf, name, sizeof(buf) - 1);
-  buf[sizeof(buf) - 1] = '\0';
-  for (size_t len = strlen(buf); len > 0; len--) {
-    buf[len - 1] = '\0';
-    char candidate[44];
-    snprintf(candidate, sizeof(candidate), "%s...", buf);
-    if (kaleidobox_font_draw_text_fit(y, candidate, 170, 170, 180)) {
-      return;
+// "HH:MM"/"H:MM" respecting the 12h/24h NVS pref - same idiom as
+// clock.c's kaleidobox_clock_overlay(), applied to now+remaining_secs
+// instead of now.
+static void format_eta(int remaining_secs, char *out, size_t out_size) {
+  time_t eta = time(NULL) + remaining_secs;
+  struct tm tm_eta;
+  localtime_r(&eta, &tm_eta);
+  bool is_24h = kaleidobox_nvs_get_clock_24h();
+  int hour = tm_eta.tm_hour;
+  if (!is_24h) {
+    hour = hour % 12;
+    if (hour == 0) {
+      hour = 12;
     }
   }
+  snprintf(out, out_size, is_24h ? "%02d:%02d" : "%d:%02d", hour, tm_eta.tm_min);
 }
 
 static void render_printer(const printer_entry_t *p) {
   kaleidobox_matrix_clear();
+
+  // Real printer names (e.g. "Core One") plus a percent don't reliably
+  // fit one 64px line side by side - name gets its own line again, fit
+  // or trim like every other name-only case in this file.
+  char line[40];
   if (!kaleidobox_font_draw_text_fit(2, p->name, 255, 255, 255)) {
     kaleidobox_font_draw_text_centered(2, "Printing", 255, 255, 255);
   }
-  draw_filename_fit(12, p->file_name);
-  draw_progress_bar(4, 24, 56, 10, p->progress / 100.0f);
 
-  // Percent + time remaining on one combined line, not two stacked
-  // ones - frees up a second line's worth of vertical space (used
-  // above for the file name instead) without losing either value.
+  snprintf(line, sizeof(line), "%d%%", (int)p->progress);
+  kaleidobox_font_draw_text_centered(13, line, 255, 255, 255);
+
+  // Name(y2,h7) / Prog(y13,h7) / bar(y24,h14) / Rem(y42,h7) / ETA(y53,h7)
+  // - even ~4px gaps across all five instead of clumping.
+  draw_progress_bar(4, 24, 56, 14, p->progress / 100.0f);
+
   char remaining[16];
   format_remaining(p->remaining_secs, remaining, sizeof(remaining));
-  char line[24];
-  snprintf(line, sizeof(line), "%d%% - %s", (int)p->progress, remaining);
-  kaleidobox_font_draw_text_centered(42, line, 200, 200, 200);
+  char eta[8];
+  format_eta(p->remaining_secs, eta, sizeof(eta));
+
+  // Stacked, not side-by-side - "Rem: 23h59m / ETA: 12:34" (or even the
+  // bare values squeezed together) doesn't fit 64px for the long-print
+  // case, which is the common case, not an edge one. Each line also
+  // falls back to a bare value if "Left: "/"ETA: " itself doesn't fit -
+  // multi-day remaining times ("100h5m") are rare but not impossible.
+  snprintf(line, sizeof(line), "Left: %s", remaining);
+  if (!kaleidobox_font_draw_text_fit(42, line, 255, 255, 255)) {
+    kaleidobox_font_draw_text_centered(42, remaining, 255, 255, 255);
+  }
+  snprintf(line, sizeof(line), "ETA: %s", eta);
+  if (!kaleidobox_font_draw_text_fit(53, line, 255, 255, 255)) {
+    kaleidobox_font_draw_text_centered(53, eta, 255, 255, 255);
+  }
 }
 
 // Shared by printing_count() and render_printing() below so the
