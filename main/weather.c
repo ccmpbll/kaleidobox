@@ -160,13 +160,7 @@ static void render_weather(const weather_data_t *w) {
   char deg = units_val == 0 ? 'C' : 'F';
 
   kaleidobox_matrix_clear();
-  int y = 3;
-  if (fields & WEATHER_FIELD_LOCATION) {
-    if (!kaleidobox_font_draw_text_fit(y, w->city, 255, 255, 255)) {
-      kaleidobox_font_draw_text_centered(y, "Weather", 255, 255, 255);
-    }
-    y += 11;
-  }
+  bool has_city = fields & WEATHER_FIELD_LOCATION;
 
   // Build the field list first, then space rows to fit whatever's left
   // of the panel below the city - with all 6 fields on, a fixed 9px
@@ -188,28 +182,28 @@ static void render_weather(const weather_data_t *w) {
     n++;
   }
   if (fields & WEATHER_FIELD_FEELS_LIKE) {
-    snprintf(lines[n].text, sizeof(lines[n].text), "Feels %d%c", w->feels_like, deg);
+    snprintf(lines[n].text, sizeof(lines[n].text), "Feel: %d%c", w->feels_like, deg);
     lines[n].r = 200; lines[n].g = 200; lines[n].b = 200;
     n++;
   }
   if (fields & WEATHER_FIELD_HIGH_LOW) {
-    snprintf(lines[n].text, sizeof(lines[n].text), "H%d L%d", w->temp_max, w->temp_min);
+    snprintf(lines[n].text, sizeof(lines[n].text), "H: %d L: %d", w->temp_max, w->temp_min);
     lines[n].r = 200; lines[n].g = 200; lines[n].b = 200;
     n++;
   }
   if (fields & WEATHER_FIELD_HUMIDITY) {
-    snprintf(lines[n].text, sizeof(lines[n].text), "%d%% humid", w->humidity);
+    snprintf(lines[n].text, sizeof(lines[n].text), "Humid: %d%%", w->humidity);
     lines[n].r = 150; lines[n].g = 150; lines[n].b = 200;
     n++;
   }
   if (fields & WEATHER_FIELD_WIND) {
-    snprintf(lines[n].text, sizeof(lines[n].text), "%.0f%s wind", w->wind_speed,
+    snprintf(lines[n].text, sizeof(lines[n].text), "Wind: %.0f%s", w->wind_speed,
             units_val == 0 ? "m/s" : "mph");
     lines[n].r = 150; lines[n].g = 150; lines[n].b = 200;
     n++;
   }
 
-  if (n == 0) {
+  if (n == 0 && !has_city) {
     return;
   }
   // Fixed 9px step (7px glyph + 2px gap) - shrinking it to guarantee
@@ -219,10 +213,27 @@ static void render_weather(const weather_data_t *w) {
   // whichever trailing fields don't fit than render all of them
   // illegibly.
   const int step = 9;
-  int max_n = (CANVAS_HEIGHT - y - 7) / step + 1;
-  if (n > max_n) {
-    ESP_LOGW(TAG, "weather: %d fields enabled, only %d fit - dropping the rest", n, max_n);
-    n = max_n;
+  int total_rows = (has_city ? 1 : 0) + n;
+  int max_rows = (CANVAS_HEIGHT - 7) / step + 1;
+  if (total_rows > max_rows) {
+    int dropped = total_rows - max_rows;
+    ESP_LOGW(TAG, "weather: %d rows enabled, only %d fit - dropping %d",
+             total_rows, max_rows, dropped);
+    n -= dropped;
+    total_rows = max_rows;
+  }
+
+  // Center the whole block vertically instead of anchoring to the top -
+  // an even top/bottom margin instead of leftover space stranded at the
+  // bottom whenever fewer than all 6 fields are enabled.
+  int content_h = total_rows * step - (step - 7);
+  int y = (CANVAS_HEIGHT - content_h) / 2;
+
+  if (has_city) {
+    if (!kaleidobox_font_draw_text_fit(y, w->city, 255, 255, 255)) {
+      kaleidobox_font_draw_text_centered(y, "Weather", 255, 255, 255);
+    }
+    y += step;
   }
   for (int i = 0; i < n; i++) {
     kaleidobox_font_draw_text_centered(y, lines[i].text, lines[i].r, lines[i].g, lines[i].b);
