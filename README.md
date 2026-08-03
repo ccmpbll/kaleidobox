@@ -1,7 +1,4 @@
-<h1 align="center">
-  <img src="logo.png" width="64" align="left"/>
-  KaleidoBox
-</h1>
+# <img src="web/kaleidobox.png" alt="" width="64"> KaleidoBox
 
 ESP32-S3 firmware driving a 64×64 HUB75 RGB LED matrix panel. Draw or upload an image, display it straight or as an animated kaleidoscope, save to a TF card gallery, and rotate through a clock, custom text messages, weather, and 3D-printer progress (via [PrintSpy](https://github.com/ccmpbll/printspy) over MQTT).
 
