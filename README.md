@@ -1,5 +1,5 @@
 <h1 align="center">
-  <img src="assets/logo.png" width="64" align="left"/>
+  <img src="logo.png" width="64" align="left"/>
   KaleidoBox
 </h1>
 
