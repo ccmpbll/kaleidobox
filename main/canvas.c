@@ -50,14 +50,17 @@ const uint8_t *kaleidobox_canvas_buffer(void) { return g_buffer; }
 
 void kaleidobox_canvas_flip(void) { kaleidobox_matrix_flip(); }
 
-// Shared tail of set_all()/repaint() below: push g_buffer to the matrix
-// and, if kaleidoscope is running, feed it the same content as its
-// source - kaleidoscope samples from its own private copy (see
-// kaleidoscope.c), so skipping this would mean a canvas change gets
-// silently overwritten by kaleidoscope's very next frame instead of
-// actually taking effect.
+// Shared tail of set_all()/repaint() below: if kaleidoscope is running,
+// feed it g_buffer as its new source instead of drawing straight to
+// the matrix - kaleidoscope samples from its own private copy and
+// repaints continuously (see kaleidoscope.c), so a direct matrix draw
+// here would get overwritten by its very next frame anyway, except for
+// the one flat/unfolded frame it flashes onto the panel in the
+// meantime. Harmless as a single stray frame under an instant cut, but
+// a visible "jump" of raw unfolded content right at the end of
+// set_all_crossfade()'s otherwise-smooth blend (confirmed live: "theres
+// also a jump in the image when its changing").
 static void repaint_matrix_and_resume_kaleidoscope(void) {
-  kaleidobox_matrix_draw_rgb888(g_buffer, CANVAS_WIDTH, CANVAS_HEIGHT);
   if (kaleidobox_kaleidoscope_is_running()) {
     kaleidobox_image_t source = {
         .rgb888 = g_buffer,
@@ -65,6 +68,8 @@ static void repaint_matrix_and_resume_kaleidoscope(void) {
         .height = CANVAS_HEIGHT,
     };
     kaleidobox_kaleidoscope_update_source(&source);
+  } else {
+    kaleidobox_matrix_draw_rgb888(g_buffer, CANVAS_WIDTH, CANVAS_HEIGHT);
   }
 }
 
@@ -78,11 +83,6 @@ void kaleidobox_canvas_set_all(const uint8_t *rgb888) {
 #define CROSSFADE_STEP_MS 20
 
 void kaleidobox_canvas_set_all_crossfade(const uint8_t *rgb888) {
-  if (kaleidobox_kaleidoscope_is_running()) {
-    kaleidobox_canvas_set_all(rgb888);
-    return;
-  }
-
   // MALLOC_CAP_SPIRAM - same internal-RAM-starvation class fixed
   // elsewhere in this project; 12KB is well under the threshold that
   // forces a plain malloc() into scarce internal RAM.
@@ -91,12 +91,25 @@ void kaleidobox_canvas_set_all_crossfade(const uint8_t *rgb888) {
     kaleidobox_canvas_set_all(rgb888);
     return;
   }
+  // While kaleidoscope is running, direct matrix writes get overwritten
+  // by its very next animation frame (it repaints continuously from its
+  // own copied source - see kaleidoscope.c) before ever becoming
+  // visible. Feeding each interpolated frame in as the live SOURCE
+  // instead makes kaleidoscope itself render the fold pattern from a
+  // gradually-blending image, so the transition still reads as smooth.
+  bool kaleido_running = kaleidobox_kaleidoscope_is_running();
+  kaleidobox_image_t source = {
+      .rgb888 = frame, .width = CANVAS_WIDTH, .height = CANVAS_HEIGHT};
   for (int step = 1; step <= CROSSFADE_STEPS; step++) {
     for (size_t i = 0; i < sizeof(g_buffer); i++) {
       int diff = (int)rgb888[i] - (int)g_buffer[i];
       frame[i] = (uint8_t)(g_buffer[i] + diff * step / CROSSFADE_STEPS);
     }
-    kaleidobox_matrix_draw_rgb888(frame, CANVAS_WIDTH, CANVAS_HEIGHT);
+    if (kaleido_running) {
+      kaleidobox_kaleidoscope_update_source(&source);
+    } else {
+      kaleidobox_matrix_draw_rgb888(frame, CANVAS_WIDTH, CANVAS_HEIGHT);
+    }
     vTaskDelay(pdMS_TO_TICKS(CROSSFADE_STEP_MS));
   }
   free(frame);
