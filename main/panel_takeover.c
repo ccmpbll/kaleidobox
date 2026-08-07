@@ -12,7 +12,6 @@
 
 static bool g_active = false;
 static bool g_was_kaleido_running = false;
-static bool g_was_gallery_auto = false;
 
 bool kaleidobox_panel_takeover_active(void) { return g_active; }
 
@@ -33,7 +32,6 @@ bool kaleidobox_panel_takeover_begin(void) {
   // was doing before the last stop/reboot) regardless of whether the
   // live task has actually gotten around to starting yet.
   g_was_kaleido_running = kaleidobox_nvs_get_kaleido_running();
-  g_was_gallery_auto = kaleidobox_nvs_get_gallery_auto_advance();
 
   // Transient variant, NOT kaleidobox_kaleidoscope_stop() - this pause
   // is internal/temporary (display rotation cycling to a printer/
@@ -48,9 +46,11 @@ bool kaleidobox_panel_takeover_begin(void) {
   // the takeover starts from a clean base even before the caller draws
   // its own content over it.
   kaleidobox_kaleidoscope_stop_transient();
-  if (g_was_gallery_auto) {
-    kaleidobox_nvs_set_gallery_auto_advance(false);
-  }
+  // Gallery auto-advance itself checks kaleidobox_panel_takeover_active()
+  // before firing (see gallery.c) rather than this flipping the NVS
+  // auto_advance flag off/on here - that used to fight over the same
+  // flag gallery_bg_task resets its progress counter on, wiping out any
+  // accumulated progress every single takeover cycle.
 
   g_active = true;
   return true;
@@ -66,9 +66,6 @@ void kaleidobox_panel_takeover_end(void) {
   // kaleidoscope against that same buffer.
   kaleidobox_canvas_repaint();
 
-  if (g_was_gallery_auto) {
-    kaleidobox_nvs_set_gallery_auto_advance(true);
-  }
   // Also re-checks the CURRENT NVS flag, not just the begin()-time
   // snapshot - if the user explicitly stopped kaleidoscope (a real
   // kaleidobox_kaleidoscope_stop(), persisting kaleido_running=false)

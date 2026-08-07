@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "panel_takeover.h"
 #include "sdcard.h"
 #include "settings.h"
 #include <dirent.h>
@@ -145,7 +146,18 @@ static void gallery_bg_task(void *arg) {
 
     if (kaleidobox_nvs_get_gallery_auto_advance()) {
       uint16_t interval = kaleidobox_nvs_get_gallery_interval_seconds();
-      if (interval > 0 && ++elapsed_s >= interval) {
+      // Clamp at interval instead of resetting to 0 while a panel
+      // takeover (weather/printer) owns the matrix - a takeover cycling
+      // more often than this interval (e.g. weather every ~56s vs a
+      // 90s gallery interval) was wiping out all progress every cycle,
+      // so elapsed_s could never reach the threshold at all (confirmed
+      // live: "it wont rotate on the schedule"). Holding progress here
+      // means it fires the moment the takeover clears instead of never.
+      if (interval > 0 && elapsed_s < interval) {
+        elapsed_s++;
+      }
+      if (interval > 0 && elapsed_s >= interval &&
+          !kaleidobox_panel_takeover_active()) {
         elapsed_s = 0;
         kaleidobox_gallery_next();
       }
