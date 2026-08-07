@@ -26,6 +26,16 @@ const uint8_t *kaleidobox_canvas_buffer(void); // CANVAS_WIDTH*CANVAS_HEIGHT*3 b
 // set_pixel() calls - see matrix.h for why that mattered.
 void kaleidobox_canvas_set_all(const uint8_t *rgb888);
 
+// Same as set_all(), but blends from the current buffer to rgb888 over
+// a short series of intermediate frames instead of jumping straight to
+// the new image - for gallery image switches (see gallery.c), where an
+// instant cut reads as a jarring flash. No-op fade (falls straight
+// through to set_all()) if kaleidoscope is running: kaleidoscope
+// repaints the matrix from its own copied source every frame (see
+// kaleidoscope.c), so any direct matrix writes here would just be
+// stomped before ever becoming visible.
+void kaleidobox_canvas_set_all_crossfade(const uint8_t *rgb888);
+
 // Re-pushes the canvas's existing content to the matrix (and resumes
 // kaleidoscope from it) without marking it dirty - for callers
 // restoring/repainting what's already there, not applying new content.

@@ -1,8 +1,10 @@
 #include "canvas.h"
 
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "kaleidoscope.h"
 #include "matrix.h"
 #include <string.h>
@@ -70,6 +72,40 @@ void kaleidobox_canvas_set_all(const uint8_t *rgb888) {
   memcpy(g_buffer, rgb888, sizeof(g_buffer));
   g_dirty = true;
   repaint_matrix_and_resume_kaleidoscope();
+}
+
+#define CROSSFADE_STEPS 25
+#define CROSSFADE_STEP_MS 20
+
+void kaleidobox_canvas_set_all_crossfade(const uint8_t *rgb888) {
+  if (kaleidobox_kaleidoscope_is_running()) {
+    kaleidobox_canvas_set_all(rgb888);
+    return;
+  }
+
+  // MALLOC_CAP_SPIRAM - same internal-RAM-starvation class fixed
+  // elsewhere in this project; 12KB is well under the threshold that
+  // forces a plain malloc() into scarce internal RAM.
+  uint8_t *frame = heap_caps_malloc(sizeof(g_buffer), MALLOC_CAP_SPIRAM);
+  if (!frame) {
+    kaleidobox_canvas_set_all(rgb888);
+    return;
+  }
+  for (int step = 1; step <= CROSSFADE_STEPS; step++) {
+    for (size_t i = 0; i < sizeof(g_buffer); i++) {
+      int diff = (int)rgb888[i] - (int)g_buffer[i];
+      frame[i] = (uint8_t)(g_buffer[i] + diff * step / CROSSFADE_STEPS);
+    }
+    kaleidobox_matrix_draw_rgb888(frame, CANVAS_WIDTH, CANVAS_HEIGHT);
+    vTaskDelay(pdMS_TO_TICKS(CROSSFADE_STEP_MS));
+  }
+  free(frame);
+
+  // Finalize through the normal path - exact byte match (not just the
+  // last interpolated step, step/CROSSFADE_STEPS==1 should already
+  // equal it, but this also sets g_dirty and stays the single source of
+  // truth for "a real content change happened").
+  kaleidobox_canvas_set_all(rgb888);
 }
 
 // Re-pushes whatever g_buffer already holds to the matrix (and resumes

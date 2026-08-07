@@ -63,9 +63,11 @@ static esp_err_t load_file_into_canvas(const char *path) {
     free(buf);
     return ESP_ERR_INVALID_SIZE;
   }
-  // kaleidobox_canvas_set_all() already updates a running kaleidoscope's
-  // source (see canvas.c) - no need to duplicate that here.
-  kaleidobox_canvas_set_all(buf);
+  // Crossfades from whatever's currently showing instead of cutting
+  // instantly - falls straight through to a plain set_all() if
+  // kaleidoscope is running (see canvas.c), since kaleidoscope repaints
+  // the matrix every frame from its own source and would stomp the fade.
+  kaleidobox_canvas_set_all_crossfade(buf);
   free(buf);
   return ESP_OK;
 }
