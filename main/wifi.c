@@ -202,7 +202,10 @@ static void ip_display_timeout_cb(void *arg) {
         .width = CANVAS_WIDTH,
         .height = CANVAS_HEIGHT,
     };
-    kaleidobox_kaleidoscope_start(&source);
+    esp_err_t err = kaleidobox_kaleidoscope_start(&source);
+    if (err != ESP_OK) {
+      ESP_LOGW(TAG, "kaleidoscope failed to resume at boot: %s", esp_err_to_name(err));
+    }
   }
 }
 

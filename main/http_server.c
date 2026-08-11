@@ -591,9 +591,13 @@ static esp_err_t kaleidoscope_post_handler(httpd_req_t *req) {
         .width = CANVAS_WIDTH,
         .height = CANVAS_HEIGHT,
     };
-    // Not yet implemented (see kaleidoscope.c) - reports the real state
-    // back below rather than pretending it started.
-    kaleidobox_kaleidoscope_start(&source);
+    // The response's "running" field below reflects the real
+    // post-attempt state either way, but log a failure too - silent
+    // otherwise if it ever actually happens.
+    esp_err_t err = kaleidobox_kaleidoscope_start(&source);
+    if (err != ESP_OK) {
+      ESP_LOGW(TAG, "kaleidoscope failed to start: %s", esp_err_to_name(err));
+    }
   }
 
   httpd_resp_set_type(req, "application/json");

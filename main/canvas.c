@@ -7,6 +7,7 @@
 #include "freertos/task.h"
 #include "kaleidoscope.h"
 #include "matrix.h"
+#include "panel_takeover.h"
 #include <string.h>
 
 static const char *TAG = "canvas";
@@ -97,15 +98,26 @@ void kaleidobox_canvas_set_all_crossfade(const uint8_t *rgb888) {
   // visible. Feeding each interpolated frame in as the live SOURCE
   // instead makes kaleidoscope itself render the fold pattern from a
   // gradually-blending image, so the transition still reads as smooth.
-  bool kaleido_running = kaleidobox_kaleidoscope_is_running();
   kaleidobox_image_t source = {
       .rgb888 = frame, .width = CANVAS_WIDTH, .height = CANVAS_HEIGHT};
   for (int step = 1; step <= CROSSFADE_STEPS; step++) {
+    // A gallery fade can start before a weather/printer takeover, then
+    // still be mid-flight ~500ms later when display_rotation's own
+    // independent 1s tick begins one - re-checked every step (not
+    // captured once) since either can flip mid-fade. Bail without
+    // touching the matrix or kaleidoscope source at all once a takeover
+    // owns the panel; still update g_buffer below so canvas state stays
+    // correct for whenever the takeover restores/resumes from it.
+    // Confirmed live: "the static gallery image is shown instead of the
+    // kaleidoscope" after a weather takeover ended.
+    if (kaleidobox_panel_takeover_active()) {
+      break;
+    }
     for (size_t i = 0; i < sizeof(g_buffer); i++) {
       int diff = (int)rgb888[i] - (int)g_buffer[i];
       frame[i] = (uint8_t)(g_buffer[i] + diff * step / CROSSFADE_STEPS);
     }
-    if (kaleido_running) {
+    if (kaleidobox_kaleidoscope_is_running()) {
       kaleidobox_kaleidoscope_update_source(&source);
     } else {
       kaleidobox_matrix_draw_rgb888(frame, CANVAS_WIDTH, CANVAS_HEIGHT);
@@ -113,6 +125,17 @@ void kaleidobox_canvas_set_all_crossfade(const uint8_t *rgb888) {
     vTaskDelay(pdMS_TO_TICKS(CROSSFADE_STEP_MS));
   }
   free(frame);
+
+  if (kaleidobox_panel_takeover_active()) {
+    // A takeover claimed the panel mid-fade (see the loop's break
+    // above) - update the logical canvas content only, no matrix/
+    // kaleidoscope touch. set_all() would otherwise draw g_buffer
+    // straight to the matrix here too (kaleidoscope is stopped for the
+    // duration of a takeover), stomping whatever the takeover just drew.
+    memcpy(g_buffer, rgb888, sizeof(g_buffer));
+    g_dirty = true;
+    return;
+  }
 
   // Finalize through the normal path - exact byte match (not just the
   // last interpolated step, step/CROSSFADE_STEPS==1 should already

@@ -1,8 +1,11 @@
 #include "panel_takeover.h"
 
 #include "canvas.h"
+#include "esp_log.h"
 #include "kaleidoscope.h"
 #include "settings.h"
+
+static const char *TAG = "panel_takeover";
 
 // If the user drew a pixel more recently than this, don't yank the
 // panel away from them for a takeover - same "explicit user action
@@ -78,7 +81,13 @@ void kaleidobox_panel_takeover_end(void) {
         .width = CANVAS_WIDTH,
         .height = CANVAS_HEIGHT,
     };
-    kaleidobox_kaleidoscope_start(&source);
+    esp_err_t err = kaleidobox_kaleidoscope_start(&source);
+    if (err != ESP_OK) {
+      // Left showing the flat canvas repainted above - not silently
+      // stuck for no diagnosable reason if this ever actually fires.
+      ESP_LOGW(TAG, "kaleidoscope failed to resume after takeover: %s",
+               esp_err_to_name(err));
+    }
   }
 
   g_active = false;
